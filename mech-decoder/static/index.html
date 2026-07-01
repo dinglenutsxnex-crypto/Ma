@@ -3,677 +3,514 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mech Arena — UDP Protocol Decoder</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<title>Mech Arena — Battle Connection</title>
 <style>
-  :root {
-    --bg: #0d0f14;
-    --surface: #141720;
-    --surface2: #1c2030;
-    --border: #2a2f3f;
-    --accent: #4f8ef7;
-    --green: #2ecc71;
-    --red: #e74c3c;
-    --yellow: #f1c40f;
-    --purple: #9b59b6;
-    --cyan: #1abc9c;
-    --text: #e2e8f0;
-    --muted: #7a8499;
-    --shoot: #e74c3c;
-    --ability: #9b59b6;
-    --move: #2ecc71;
-    --idle: #7a8499;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+:root {
+  --bg: #0b0d11;
+  --s1: #111318;
+  --s2: #181b22;
+  --border: #23273a;
+  --accent: #3b7ff5;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+  --purple: #a855f7;
+  --cyan: #06b6d4;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --mono: 'Consolas', 'Fira Code', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
-    display: flex; align-items: center; gap: 16px;
-  }
-  header h1 { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; }
-  header p { color: var(--muted); font-size: 13px; }
-  .badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+/* ── TOP BAR ── */
+#topbar {
+  background: var(--s1);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  display: flex; gap: 20px; align-items: center; flex-wrap: wrap; flex-shrink: 0;
+}
+#topbar .title { font-size: 15px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+#topbar .server { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 5px; background: var(--s2); border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 1.4s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+#topbar .spacer { flex: 1; }
+.stat { text-align: center; }
+.stat .n { font-size: 18px; font-weight: 700; }
+.stat .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
 
-  .layout { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 16px; max-width: 1800px; margin: 0 auto; }
+/* ── MAIN LAYOUT: left=controls+table, right=detail ── */
+#main { display: flex; flex: 1; overflow: hidden; }
 
-  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-  .stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
-  }
-  .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
-  .stat-card .value { font-size: 26px; font-weight: 700; }
-  .stat-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
-  .stat-card.green .value { color: var(--green); }
-  .stat-card.red .value { color: var(--red); }
-  .stat-card.purple .value { color: var(--purple); }
-  .stat-card.blue .value { color: var(--accent); }
-  .stat-card.yellow .value { color: var(--yellow); }
-  .stat-card.cyan .value { color: var(--cyan); }
+/* ── LEFT PANE ── */
+#left { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: hidden; }
 
-  .panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px;
-  }
-  .panel h2 { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-  .panel h2 .dot { width: 8px; height: 8px; border-radius: 50%; }
+/* ── FILTER BAR ── */
+#filters {
+  background: var(--s1);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex-shrink: 0;
+}
+#filters input[type=text] {
+  background: var(--s2); border: 1px solid var(--border); color: var(--text);
+  padding: 5px 10px; border-radius: 6px; font-size: 12px; font-family: var(--mono); width: 180px;
+  outline: none;
+}
+#filters input[type=text]:focus { border-color: var(--accent); }
+.btn-group { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.flt { background: var(--s2); border: none; color: var(--muted); padding: 5px 10px; cursor: pointer; font-size: 12px; transition: background 0.12s, color 0.12s; }
+.flt:not(:last-child) { border-right: 1px solid var(--border); }
+.flt:hover { background: var(--border); color: var(--text); }
+.flt.on { background: rgba(59,127,245,0.18); color: var(--accent); }
+select.flt-sel {
+  background: var(--s2); border: 1px solid var(--border); color: var(--muted);
+  padding: 5px 8px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;
+}
+#filters label { font-size: 11px; color: var(--muted); }
+#pkt-count { font-size: 11px; color: var(--muted); margin-left: auto; }
 
-  .chart-wrap { position: relative; height: 220px; }
-  .chart-tall { height: 300px; }
+/* ── PACKET TABLE ── */
+#table-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; }
+#table-wrap::-webkit-scrollbar { width: 5px; }
+#table-wrap::-webkit-scrollbar-track { background: var(--s1); }
+#table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+thead th {
+  position: sticky; top: 0; background: var(--s2); z-index: 2;
+  text-align: left; font-size: 10px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.6px;
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  user-select: none; cursor: pointer; white-space: nowrap; overflow: hidden;
+}
+thead th:hover { color: var(--text); }
+thead th.sorted { color: var(--accent); }
+colgroup .c-no   { width: 52px; }
+colgroup .c-time { width: 72px; }
+colgroup .c-dir  { width: 52px; }
+colgroup .c-op   { width: 46px; }
+colgroup .c-seq  { width: 48px; }
+colgroup .c-len  { width: 46px; }
+colgroup .c-load { width: 54px; }
+colgroup .c-type { width: 76px; }
+colgroup .c-rot  { width: 50px; }
+colgroup .c-hex  { width: auto; }
 
-  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-  @media (max-width: 1100px) { .three-col { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 700px) { .three-col { grid-template-columns: 1fr; } }
+tbody tr { cursor: pointer; border-bottom: 1px solid rgba(35,39,58,0.5); }
+tbody tr:hover td { background: var(--s2); }
+tbody tr.selected td { background: rgba(59,127,245,0.12) !important; border-left: 2px solid var(--accent); }
+tbody td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 12px; }
 
-  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
-  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+.dir-c { color: var(--cyan); font-weight: 600; }
+.dir-s { color: var(--yellow); font-weight: 600; }
+.op   { font-weight: 700; }
+.op-01 { color: var(--accent); }
+.op-81 { color: var(--purple); }
+.op-82 { color: var(--cyan); }
+.op-02 { color: var(--yellow); }
+.op-xx { color: var(--muted); }
+.ty-shoot  { color: var(--red); font-weight: 600; }
+.ty-ability{ color: var(--purple); font-weight: 600; }
+.ty-move   { color: var(--green); }
+.ty-idle   { color: var(--muted); }
+.ty-hb     { color: var(--purple); }
+.ty-cs     { color: var(--cyan); }
+.ty-init   { color: var(--yellow); }
+.rot-val   { color: var(--text); }
+.hex-prev  { color: #475569; font-size: 11px; }
 
-  .event-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .event-table th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--border); text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
-  .event-table td { padding: 6px 10px; border-bottom: 1px solid rgba(42,47,63,0.5); font-family: 'Consolas', 'Fira Code', monospace; }
-  .event-table tr:hover td { background: var(--surface2); }
-  .tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-  .tag.shoot { background: rgba(231,76,60,0.2); color: var(--shoot); border: 1px solid rgba(231,76,60,0.3); }
-  .tag.ability { background: rgba(155,89,182,0.2); color: var(--ability); border: 1px solid rgba(155,89,182,0.3); }
-  .tag.move { background: rgba(46,204,113,0.2); color: var(--move); border: 1px solid rgba(46,204,113,0.3); }
-  .tag.idle { background: rgba(122,132,153,0.15); color: var(--muted); border: 1px solid rgba(122,132,153,0.3); }
-  .tag.active { background: rgba(79,142,247,0.2); color: var(--accent); border: 1px solid rgba(79,142,247,0.3); }
+/* ── RIGHT DETAIL PANE ── */
+#detail {
+  width: 360px; flex-shrink: 0;
+  background: var(--s1);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#detail-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--muted);
+  flex-shrink: 0;
+}
+#detail-header .ph { font-size: 11px; color: var(--muted); }
+#detail-header .pv { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
 
-  .hex-viewer {
-    font-family: 'Consolas', 'Fira Code', monospace;
-    font-size: 12px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px;
-    overflow-x: auto;
-    white-space: pre;
-    line-height: 1.8;
-    max-height: 300px;
-    overflow-y: auto;
-  }
-  .hex-b0 { color: #7a8499; }
-  .hex-b1 { color: var(--accent); font-weight: bold; }
-  .hex-b2 { color: var(--green); }
-  .hex-b3 { color: var(--yellow); }
-  .hex-b4 { color: var(--cyan); }
-  .hex-b5 { color: var(--red); }
-  .hex-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+#hex-view {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.85;
+  padding: 12px 14px;
+  overflow-y: auto;
+  flex: 1;
+  white-space: pre;
+}
+#hex-view::-webkit-scrollbar { width: 4px; }
+#hex-view::-webkit-scrollbar-thumb { background: var(--border); }
 
-  .phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  @media (max-width: 700px) { .phases { grid-template-columns: 1fr; } }
-  .phase-card { background: var(--surface2); border-radius: 8px; padding: 14px; border-left: 3px solid; }
-  .phase-card.idle { border-color: var(--muted); }
-  .phase-card.active { border-color: var(--accent); }
-  .phase-card.wind { border-color: var(--yellow); }
-  .phase-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-  .phase-card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+#field-table { padding: 0 14px 12px; flex-shrink: 0; }
+.ft-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid rgba(35,39,58,0.7); font-size: 12px; }
+.ft-row:last-child { border-bottom: none; }
+.ft-k { color: var(--muted); }
+.ft-v { font-family: var(--mono); font-weight: 600; color: var(--text); }
 
-  .field-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
-  .field-row:last-child { border-bottom: none; }
-  .field-name { color: var(--muted); font-size: 12px; }
-  .field-val { font-family: monospace; font-size: 13px; font-weight: 600; }
-  .field-conf { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
-  .conf-confirmed { background: rgba(46,204,113,0.15); color: var(--green); }
-  .conf-likely { background: rgba(241,196,15,0.15); color: var(--yellow); }
-  .conf-unknown { background: rgba(122,132,153,0.15); color: var(--muted); }
+#detail-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
 
-  .byte-grid { display: flex; flex-wrap: wrap; gap: 4px; font-family: monospace; font-size: 11px; }
-  .byte-cell {
-    width: 38px; height: 32px; border-radius: 4px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border: 1px solid transparent; cursor: default;
-    transition: border-color 0.15s;
-  }
-  .byte-cell .offset { font-size: 9px; color: var(--muted); }
-  .byte-cell .val { font-size: 12px; font-weight: 600; }
-  .byte-cell:hover { border-color: var(--accent); }
-
-  .selected-packet-info { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-  .selected-packet-info span { color: var(--text); font-weight: 600; }
-
-  .timeline-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-  .btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s; }
-  .btn:hover { background: var(--border); }
-  .btn.active { background: rgba(79,142,247,0.2); border-color: var(--accent); color: var(--accent); }
-
-  .events-list { max-height: 320px; overflow-y: auto; }
-  .events-list::-webkit-scrollbar { width: 4px; }
-  .events-list::-webkit-scrollbar-track { background: var(--surface2); }
-  .events-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-  .proto-field { margin-bottom: 12px; }
-  .proto-field .pf-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .proto-field .pf-name { font-weight: 600; font-size: 13px; }
-  .proto-field .pf-offset { font-size: 11px; color: var(--muted); font-family: monospace; background: var(--surface2); padding: 1px 5px; border-radius: 3px; }
-  .proto-field .pf-desc { font-size: 12px; color: var(--muted); }
-
-  .section-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 16px 0 8px; }
-
-  .alert { background: rgba(79,142,247,0.08); border: 1px solid rgba(79,142,247,0.2); border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
-  .alert strong { color: var(--text); }
-
-  canvas { max-width: 100%; }
-
-  .loader { text-align: center; padding: 60px; color: var(--muted); }
-
-  .findings { display: flex; flex-direction: column; gap: 8px; }
-  .finding { background: var(--surface2); border-radius: 6px; padding: 10px 14px; display: flex; gap: 12px; align-items: flex-start; }
-  .finding .fi-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
-  .finding .fi-title { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
-  .finding .fi-body { font-size: 12px; color: var(--muted); line-height: 1.5; }
-  .finding .fi-conf { font-size: 11px; margin-top: 4px; }
+/* ── STATUS BAR ── */
+#statusbar {
+  background: var(--s2); border-top: 1px solid var(--border);
+  padding: 4px 16px; font-size: 11px; color: var(--muted);
+  display: flex; gap: 20px; flex-shrink: 0;
+}
 </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <h1>⚙ Mech Arena — UDP Protocol Decoder</h1>
-    <p>Live forensic analysis · Game server <code>34.93.190.157:7015</code> · ~52s capture</p>
-  </div>
-  <span class="badge">Lidgren bit-packed binary</span>
-  <span class="badge">Shannon entropy ~5 bit/byte</span>
-  <span class="badge">Not encrypted</span>
-</header>
-
-<div class="layout" id="app">
-  <div class="loader">Loading packet data…</div>
+<div id="topbar">
+  <div class="title">⚙ Mech Arena · Battle Connection</div>
+  <div class="server">com.plarium.mechlegion · 34.93.190.157:7015 · UDP</div>
+  <div class="pill"><span class="dot"></span>Capture loaded</div>
+  <div class="spacer"></div>
+  <div class="stat"><div class="n" id="s-total" style="color:var(--accent)">—</div><div class="l">Packets</div></div>
+  <div class="stat"><div class="n" id="s-client" style="color:var(--cyan)">—</div><div class="l">Client→Srv</div></div>
+  <div class="stat"><div class="n" id="s-server" style="color:var(--yellow)">—</div><div class="l">Srv→Client</div></div>
+  <div class="stat"><div class="n" id="s-dur" style="color:var(--green)">—</div><div class="l">Duration</div></div>
+  <div class="stat"><div class="n" id="s-shoot" style="color:var(--red)">—</div><div class="l">Shoot</div></div>
+  <div class="stat"><div class="n" id="s-ability" style="color:var(--purple)">—</div><div class="l">Ability</div></div>
 </div>
 
-<script>
-const API = '/api/data';
-
-function hexColor(b) {
-  const v = b / 255;
-  if (v < 0.25) return `rgba(79,142,247,${0.3 + v})`;
-  if (v < 0.5)  return `rgba(46,204,113,${0.3 + v})`;
-  if (v < 0.75) return `rgba(241,196,15,${0.3 + v})`;
-  return `rgba(231,76,60,${0.2 + v * 0.8})`;
-}
-
-function bytesToHexAnnotated(hex, schema) {
-  // schema = [{name, start, end, color}]
-  const bytes = hex.match(/../g) || [];
-  let lines = [];
-  let addr = 0;
-  while (addr < bytes.length) {
-    let line = `<span style="color:#4a5568">${String(addr).padStart(3,'0')}</span>  `;
-    const row = bytes.slice(addr, addr + 16);
-    row.forEach((b, i) => {
-      const abs = addr + i;
-      let color = '#7a8499';
-      if (abs === 0) color = '#4f8ef7';
-      else if (abs === 1 || abs === 2) color = '#1abc9c';
-      else if (abs === 3 || abs === 4) color = '#f1c40f';
-      else if (abs >= 5 && abs <= 6) color = '#9b59b6';
-      else if (abs >= 7 && abs <= 13) color = '#2ecc71';
-      else if (abs === 14 || abs === 15) color = '#e67e22';
-      else if (abs === 16) color = '#e74c3c';
-      else color = '#cbd5e0';
-      line += `<span style="color:${color}">${b} </span>`;
-    });
-    lines.push(line);
-    addr += 16;
-  }
-  return lines.join('\n');
-}
-
-function classifyPacket(pkt) {
-  if (pkt.shooting) return 'SHOOT';
-  if (pkt.ability) return 'ABILITY';
-  if (pkt.moving) return 'MOVE';
-  return 'IDLE';
-}
-
-function tagHtml(cls) {
-  const map = { SHOOT: ['shoot','🔴 SHOOT'], ABILITY: ['ability','🟣 ABILITY'], MOVE: ['move','🟢 MOVE'], IDLE: ['idle','IDLE'] };
-  const [tc, label] = map[cls] || ['idle','?'];
-  return `<span class="tag ${tc}">${label}</span>`;
-}
-
-async function main() {
-  const res = await fetch(API);
-  const data = await res.json();
-
-  const client = data.client;
-  const server = data.server;
-  const hb = data.heartbeats_c;
-  const cs = data.clocksync;
-  const sevents = data.server_events;
-
-  // Stats
-  const shootPkts = client.filter(p => p.shooting);
-  const abilityPkts = client.filter(p => p.ability);
-  const activePkts = client.filter(p => p.t >= 19.8 && p.t <= 40);
-  const matchDuration = Math.max(...client.map(p => p.t));
-  const maxLoad = Math.max(...client.map(p => p.load));
-  const avgIdleLen = Math.round(client.filter(p=>p.t<18).reduce((s,p)=>s+p.len,0)/client.filter(p=>p.t<18).length);
-
-  // Clock sync: get match start time offset
-  const firstSync = cs[0];
-  const uptime = firstSync ? firstSync.uptime : 0;
-  const matchRef = firstSync ? firstSync.ref : 0;
-
-  // Render
-  document.getElementById('app').innerHTML = `
-  <!-- Stats row -->
-  <div class="stats-row">
-    <div class="stat-card blue"><div class="label">Total Packets</div><div class="value">${client.length + server.length}</div><div class="sub">${client.length} client · ${server.length} server</div></div>
-    <div class="stat-card red"><div class="label">Shooting Events</div><div class="value">${shootPkts.length}</div><div class="sub">Packets ≥60 bytes (high load)</div></div>
-    <div class="stat-card purple"><div class="label">Ability Events</div><div class="value">${abilityPkts.length}</div><div class="sub">Anomalous early spikes</div></div>
-    <div class="stat-card green"><div class="label">Active Phase</div><div class="value">${activePkts.length}</div><div class="sub">t=20–40s (move+shoot)</div></div>
-    <div class="stat-card yellow"><div class="label">Peak Load</div><div class="value">${maxLoad}</div><div class="sub">Max load field value</div></div>
-    <div class="stat-card cyan"><div class="label">Match Duration</div><div class="value">${matchDuration.toFixed(1)}s</div><div class="sub">Idle baseline ${avgIdleLen}B avg</div></div>
-  </div>
-
-  <!-- Main timeline -->
-  <div class="panel">
-    <h2><span class="dot" style="background:var(--accent)"></span>Packet Timeline — Size & Activity (Client→Server)</h2>
-    <div class="legend">
-      <div class="legend-item"><div class="legend-dot" style="background:var(--idle)"></div>Idle (≤37B)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:var(--move)"></div>Moving (38–59B)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:var(--shoot)"></div>Shooting burst (≥60B)</div>
-      <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div>Ability activation</div>
-    </div>
-    <div class="chart-wrap chart-tall">
-      <canvas id="timelineChart"></canvas>
-    </div>
-  </div>
-
-  <!-- Load field & hex -->
-  <div class="two-col">
-    <div class="panel">
-      <h2><span class="dot" style="background:var(--yellow)"></span>Load Field Over Time (bytes 3–4)</h2>
-      <div class="chart-wrap">
-        <canvas id="loadChart"></canvas>
+<div id="main">
+  <div id="left">
+    <div id="filters">
+      <div class="btn-group" id="dir-btns">
+        <button class="flt on" data-dir="all">All</button>
+        <button class="flt" data-dir="C">Client→Srv</button>
+        <button class="flt" data-dir="S">Srv→Client</button>
       </div>
-    </div>
-    <div class="panel">
-      <h2><span class="dot" style="background:var(--cyan)"></span>Clock Sync Field 1 — Session Uptime (0x82 packets)</h2>
-      <div class="chart-wrap">
-        <canvas id="clockChart"></canvas>
+      <div class="btn-group" id="op-btns">
+        <button class="flt on" data-op="all">Opcode: All</button>
+        <button class="flt" data-op="01">0x01</button>
+        <button class="flt" data-op="81">0x81</button>
+        <button class="flt" data-op="82">0x82</button>
+        <button class="flt" data-op="02">0x02</button>
       </div>
-    </div>
-  </div>
-
-  <!-- Protocol layout -->
-  <div class="two-col">
-    <div class="panel">
-      <h2><span class="dot" style="background:var(--green)"></span>Decoded Packet Structure</h2>
-      <div class="section-title">Opcode 0x01 — Per-tick input/state</div>
-      <div class="field-row">
-        <div><div class="field-name">Byte 0 — Opcode</div><div class="field-val" style="color:var(--accent)">0x01</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
+      <div class="btn-group" id="type-btns">
+        <button class="flt on" data-type="all">Type: All</button>
+        <button class="flt" data-type="shoot">Shoot</button>
+        <button class="flt" data-type="ability">Ability</button>
+        <button class="flt" data-type="move">Move</button>
+        <button class="flt" data-type="idle">Idle</button>
       </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 1–2 — Sequence number (LE u16)</div><div class="field-val" style="color:var(--cyan)">0, 2, 4, … (+2 per tick)</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 3–4 — Load/size field (LE u16)</div><div class="field-val" style="color:var(--yellow)">256 idle → 608 peak</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Byte 5 — Player count / frame tag</div><div class="field-val" style="color:var(--purple)">0x63 (99) — constant</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Byte 6 — Direction alternator</div><div class="field-val" style="color:var(--purple)">0x64 ↔ 0x6c (alternates)</div></div>
-        <span class="field-conf conf-likely">🟡 Likely tick-parity</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 7–13 — Position/history ring buffer</div><div class="field-val" style="color:var(--green)">3×2-byte VarInt, shifts over time</div></div>
-        <span class="field-conf conf-likely">🟡 Likely position delta</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 14–15 — State flags</div><div class="field-val" style="color:var(--yellow)">0x50 0x66 → changes on fire</div></div>
-        <span class="field-conf conf-likely">🟡 Likely weapon/state</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Byte 16 — Sub-packet type flag</div><div class="field-val" style="color:var(--red)">0x82 idle, 0x02/0x46 active</div></div>
-        <span class="field-conf conf-likely">🟡 Likely action type</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 17+ — Bit-packed action payload</div><div class="field-val" style="color:var(--red)">Variable (Lidgren NetBuffer)</div></div>
-        <span class="field-conf conf-unknown">❓ Not yet isolated</span>
-      </div>
-      <div class="section-title" style="margin-top:16px">Opcode 0x81 — Heartbeat (9 bytes)</div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 5–8 → ÷ 2²⁴ = match time (s)</div><div class="field-val" style="color:var(--cyan)">~0.0s → ~50s (1:1 with wall clock)</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
-      <div class="section-title" style="margin-top:16px">Opcode 0x82 — Clock sync (13 bytes)</div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 5–8 — LE float32 (session uptime)</div><div class="field-val" style="color:var(--cyan)">${uptime.toFixed(1)}s at first packet</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
-      <div class="field-row">
-        <div><div class="field-name">Bytes 9–12 — LE float32 (clock ref 2)</div><div class="field-val" style="color:var(--cyan)">${matchRef.toFixed(1)}s at first packet</div></div>
-        <span class="field-conf conf-confirmed">✅ Confirmed</span>
-      </div>
+      <input type="text" id="hex-search" placeholder="hex filter…" spellcheck="false">
+      <span id="pkt-count">— packets</span>
     </div>
 
-    <div class="panel">
-      <h2><span class="dot" style="background:var(--red)"></span>Key Findings</h2>
-      <div class="findings">
-        <div class="finding">
-          <div class="fi-icon">🟢</div>
-          <div>
-            <div class="fi-title">Movement Phase Detected (t = 0–19.9s → idle, t ≈ 20–40s → active)</div>
-            <div class="fi-body">Packets grow from 35–37 bytes (idle) to 38–81 bytes the moment movement+shooting starts. The load field jumps from 256 to 264–608. Byte 8 shifts from 0x60–0x70 range to 0xC0–0xD0 range simultaneously. Timing matches a new gameplay engagement.</div>
-            <div class="fi-conf"><span class="field-conf conf-confirmed">✅ Confirmed — corroborated by load field, packet length, and byte-8 transition all at t≈20s</span></div>
-          </div>
-        </div>
-        <div class="finding">
-          <div class="fi-icon">🔴</div>
-          <div>
-            <div class="fi-title">Shooting Bursts: ${shootPkts.length} packets ≥60 bytes</div>
-            <div class="fi-body">Three distinct shooting clusters: <strong>t=20.3–22.1s</strong> (burst 1, peaks at 81 bytes / load=608), <strong>t=23.4–25.4s</strong> (burst 2), and <strong>t=28.5–39.7s</strong> (sustained fire). Peak packets at t=21.7s (81B) and t=21.8s (79B) represent maximum simultaneous inputs (movement + fire + possibly aim). Sub-packets are concatenated inside these large payloads (e.g. the 76B packet at t=20.3s contains 2 sequential tick records).</div>
-            <div class="fi-conf"><span class="field-conf conf-likely">🟡 Likely — load field and length scale together; fire vs. aim vs. move not yet isolated from each other</span></div>
-          </div>
-        </div>
-        <div class="finding">
-          <div class="fi-icon">🟣</div>
-          <div>
-            <div class="fi-title">Ability Activation Candidates: t ≈ 7.58s and t ≈ 19.9s</div>
-            <div class="fi-body">Two pre-active-window anomalous packets at t=7.58s (44B, load=0x0138) and t=7.59s (45B, load=0x0140) suggest an early ability use. The packet at t=19.897s (45B, load=0x0140) is the exact pre-engagement spike right before the main shooting window — this is the most likely <strong>special ability trigger</strong>. Ability packets carry a distinct load value (0x0138–0x0140) vs. idle (0x00F0–0x0100).</div>
-            <div class="fi-conf"><span class="field-conf conf-likely">🟡 Likely — structural signature is distinct; cannot confirm without a labeled isolated capture</span></div>
-          </div>
-        </div>
-        <div class="finding">
-          <div class="fi-icon">📡</div>
-          <div>
-            <div class="fi-title">Position Encoding: Lidgren bit-packed VarInt ring buffer</div>
-            <div class="fi-body">Bytes 7–13 carry a 3-slot ring buffer of position deltas. The upper nibble of byte 7 cycles through 16 distinct values (0–15) × 22.5° → encodes <strong>rotation/heading</strong> in 16 discrete steps. Byte 8's value shifts from low (0x60–0x70) in idle to high (0xC0–0xD0) in active movement — consistent with a Y-position or velocity delta encoding. Full float32/int16 decoding fails because data is bit-packed at non-byte boundaries (Lidgren NetBuffer).</div>
-            <div class="fi-conf"><span class="field-conf conf-likely">🟡 Likely — pattern is consistent; exact bit-field widths need ARM instrumentation to confirm</span></div>
-          </div>
-        </div>
-        <div class="finding">
-          <div class="fi-icon">🔄</div>
-          <div>
-            <div class="fi-title">Server 0x02 — Match Init Broadcast (t=0.1–0.4s)</div>
-            <div class="fi-body">Four 0x02 packets from server at match start (t=0.12–0.37s) carry the full world-state initialization — mech positions, beacon states, player IDs. These are the full FullWorldStateMsg serialized via IBuffSerializable. Subsequent 0x01 server packets mirror client state using differential (diff) encoding.</div>
-            <div class="fi-conf"><span class="field-conf conf-confirmed">✅ Confirmed — timing, size (77–104B), and uniqueness consistent with init broadcast</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Packet browser -->
-  <div class="panel">
-    <h2><span class="dot" style="background:var(--purple)"></span>Event Log — Notable Packets</h2>
-    <div class="events-list">
-      <table class="event-table">
+    <div id="table-wrap">
+      <table>
+        <colgroup>
+          <col class="c-no"><col class="c-time"><col class="c-dir">
+          <col class="c-op"><col class="c-seq"><col class="c-len">
+          <col class="c-load"><col class="c-type"><col class="c-rot"><col class="c-hex">
+        </colgroup>
         <thead>
           <tr>
-            <th>Time</th><th>Seq</th><th>Type</th><th>Len</th><th>Load</th><th>Byte 16 (sub-flag)</th><th>Hex preview</th>
+            <th data-col="idx">#</th>
+            <th data-col="t">Time (s)</th>
+            <th data-col="dir">Dir</th>
+            <th data-col="op">Op</th>
+            <th data-col="seq">Seq</th>
+            <th data-col="len">Bytes</th>
+            <th data-col="load">Load</th>
+            <th data-col="type">Type</th>
+            <th data-col="rot">Rot°</th>
+            <th data-col="hex">Hex (first 32B)</th>
           </tr>
         </thead>
-        <tbody id="eventTableBody"></tbody>
+        <tbody id="tbody"></tbody>
       </table>
     </div>
   </div>
 
-  <!-- Byte heatmap -->
-  <div class="two-col">
-    <div class="panel" id="byteHeatPanel">
-      <h2><span class="dot" style="background:var(--yellow)"></span>Byte Heatmap — Idle Baseline (first 37 bytes)</h2>
-      <div class="hex-label">Color = byte value (dark=low, bright=high). Field annotations below.</div>
-      <div id="idleHeatmap" class="byte-grid" style="margin-bottom:12px"></div>
-      <div class="hex-label" style="margin-top:16px">Active packet example (at peak shooting t=21.7s)</div>
-      <div id="activeHeatmap" class="byte-grid"></div>
-    </div>
-    <div class="panel">
-      <h2><span class="dot" style="background:var(--cyan)"></span>Hex Viewer — Selected Packet</h2>
-      <div class="selected-packet-info" id="hexInfo">Click a row in the Event Log above or hover the chart to inspect a packet.</div>
-      <div class="hex-label">Color guide: <span style="color:#4f8ef7">■ opcode</span> · <span style="color:#1abc9c">■ seq</span> · <span style="color:#f1c40f">■ load</span> · <span style="color:#9b59b6">■ frame tag</span> · <span style="color:#2ecc71">■ position ring</span> · <span style="color:#e67e22">■ state flags</span> · <span style="color:#e74c3c">■ sub-flag</span> · <span style="color:#cbd5e0">■ payload</span></div>
-      <div class="hex-viewer" id="hexViewer">Select a packet to view raw bytes…</div>
+  <div id="detail">
+    <div id="detail-empty">← Select a packet</div>
+    <div id="detail-filled" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+      <div id="detail-header"></div>
+      <div id="field-table"></div>
+      <div style="padding:6px 14px 4px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;border-bottom:1px solid var(--border);flex-shrink:0">
+        Raw bytes
+        <span style="float:right;text-transform:none;letter-spacing:0">
+          <span style="color:var(--accent)">■</span> opcode
+          <span style="color:var(--cyan)">■</span> seq
+          <span style="color:var(--yellow)">■</span> load
+          <span style="color:var(--purple)">■</span> frame
+          <span style="color:var(--green)">■</span> pos ring
+          <span style="color:#f97316">■</span> flags
+          <span style="color:var(--red)">■</span> subflag
+          <span style="color:#94a3b8">■</span> payload
+        </span>
+      </div>
+      <div id="hex-view"></div>
     </div>
   </div>
+</div>
 
-  <!-- Protocol phases -->
-  <div class="panel">
-    <h2><span class="dot" style="background:var(--green)"></span>Match Phase Breakdown</h2>
-    <div class="phases">
-      <div class="phase-card idle">
-        <h3>🟤 Idle Phase (t = 0–19.9s)</h3>
-        <p>Player spawned but not yet engaged. Load field stable at ~256 (0x0100). Packet length 34–37 bytes. Byte 8 values 0x60–0x70. Three-slot ring buffer in bytes 7–13 cycles slowly — mech rotating in place or respawning.</p>
-        <div class="meta">183 packets · avg 36.2 bytes · load σ ≈ 8</div>
-      </div>
-      <div class="phase-card active">
-        <h3>🔵 Active Phase (t = 20–40s)</h3>
-        <p>Movement + shooting confirmed active. Load spikes to 264–608. Packet lengths 38–81 bytes. Byte 8 shifts to 0xC0–0xD0. Sub-packets concatenated inside single UDP datagrams during fire bursts. Three shooting clusters detected.</p>
-        <div class="meta">199 packets · avg 63.1 bytes · load σ ≈ 48</div>
-      </div>
-      <div class="phase-card wind">
-        <h3>🟡 Wind-Down (t = 40–52s)</h3>
-        <p>Activity decreases but player still moving. Load drops to 264–288. Lengths settle 38–42 bytes. Byte 8 returns toward 0x60–0x70 range. Mech may be repositioning or cooldown period after engagement.</p>
-        <div class="meta">137 packets · avg 38.9 bytes · load σ ≈ 12</div>
-      </div>
-    </div>
-  </div>
+<div id="statusbar">
+  <span id="sb-sel">No packet selected</span>
+  <span id="sb-filter">No filter active</span>
+  <span style="margin-left:auto">com.plarium.mechlegion · ma.pcapng</span>
+</div>
 
-  <div class="panel">
-    <h2><span class="dot" style="background:var(--muted)"></span>What Still Needs Isolation</h2>
-    <div class="alert">
-      <strong>Movement vs. Shooting vs. Ability cannot be fully separated from this single mixed capture.</strong>
-      All three happened within the same 20-second window. To decode individual byte fields with full confidence, capture three new isolated windows:
-      <ol style="margin:8px 0 0 20px; line-height:2">
-        <li>~10s <strong>moving only</strong> (no shoot, no ability)</li>
-        <li>~10s <strong>standing still, shooting only</strong></li>
-        <li>~5s idle → <strong>one ability activation</strong> → 5s idle</li>
-      </ol>
-      Diffing those against the idle baseline will let each byte offset be attributed to a specific action with ≥90% confidence.
-      The protocol uses <strong>Lidgren.Network's bit-packed NetBuffer</strong> — fields are not byte-aligned. Full decoding requires either ARM instrumentation (frida/il2cppdumper) or known field widths from the IL2CPP dump's <code>ActorMovementState</code> / <code>ActorShootingState</code> serialization methods.
-    </div>
-  </div>
-  `;
+<script>
+const HEX_COLORS = [
+  '#3b7ff5',                              // 0 opcode
+  '#06b6d4','#06b6d4',                    // 1-2 seq
+  '#eab308','#eab308',                    // 3-4 load
+  '#a855f7','#a855f7',                    // 5-6 frame tag
+  '#22c55e','#22c55e','#22c55e','#22c55e','#22c55e','#22c55e','#22c55e', // 7-13 pos ring
+  '#f97316','#f97316',                    // 14-15 state flags
+  '#ef4444',                              // 16 subflag
+];
+function byteColor(i) { return i < HEX_COLORS.length ? HEX_COLORS[i] : '#94a3b8'; }
 
-  // Populate event table
-  const notable = client.filter(p => p.shooting || p.ability || p.len > 40 || (p.t > 19.5 && p.t < 20.5));
-  const tbody = document.getElementById('eventTableBody');
-  notable.slice(0, 80).forEach(pkt => {
-    const cls = classifyPacket(pkt);
-    const b16 = pkt.hex.length >= 34 ? pkt.hex.slice(32, 34) : '??';
-    const preview = pkt.hex.slice(0, 40) + (pkt.hex.length > 40 ? '…' : '');
+let allPackets = [];
+let filtered = [];
+let sortCol = 'idx';
+let sortAsc = true;
+let selIdx = -1;
+
+const state = { dir: 'all', op: 'all', type: 'all', hexq: '' };
+
+async function load() {
+  const res = await fetch('/api/data');
+  const d = await res.json();
+
+  // Merge client + server into one list, add direction
+  const cl = d.client.map((p,i) => ({ ...p, dir: 'C', opcode: p.hex.slice(0,2).toUpperCase(), idx: i }));
+  const sv = d.server.map((p,i) => ({ ...p, dir: 'S', opcode: p.hex.slice(0,2).toUpperCase(), idx: i }));
+
+  allPackets = [...cl, ...sv].sort((a,b) => a.t - b.t).map((p,i) => ({ ...p, globalIdx: i }));
+
+  // Deduce type
+  allPackets.forEach(p => {
+    if (p.opcode === '81') p.type = 'hb';
+    else if (p.opcode === '82') p.type = 'cs';
+    else if (p.opcode === '02') p.type = 'init';
+    else if (p.shooting) p.type = 'shoot';
+    else if (p.ability) p.type = 'ability';
+    else if (p.moving) p.type = 'move';
+    else p.type = 'idle';
+  });
+
+  // Stats
+  const dur = Math.max(...allPackets.map(p=>p.t));
+  document.getElementById('s-total').textContent = allPackets.length;
+  document.getElementById('s-client').textContent = cl.length;
+  document.getElementById('s-server').textContent = sv.length;
+  document.getElementById('s-dur').textContent = dur.toFixed(1)+'s';
+  document.getElementById('s-shoot').textContent = cl.filter(p=>p.shooting).length;
+  document.getElementById('s-ability').textContent = cl.filter(p=>p.ability).length;
+
+  applyFilter();
+  setupControls();
+}
+
+function applyFilter() {
+  filtered = allPackets.filter(p => {
+    if (state.dir !== 'all' && p.dir !== state.dir) return false;
+    if (state.op !== 'all' && p.opcode.toLowerCase() !== state.op) return false;
+    if (state.type !== 'all' && p.type !== state.type) return false;
+    if (state.hexq && !p.hex.includes(state.hexq.toLowerCase().replace(/\s+/g,''))) return false;
+    return true;
+  });
+
+  // Sort
+  filtered.sort((a,b) => {
+    let av = a[sortCol === 'idx' ? 'globalIdx' : sortCol];
+    let bv = b[sortCol === 'idx' ? 'globalIdx' : sortCol];
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  renderTable();
+  document.getElementById('pkt-count').textContent = `${filtered.length} / ${allPackets.length} packets`;
+
+  const filters = [];
+  if (state.dir !== 'all') filters.push('Dir: ' + state.dir);
+  if (state.op !== 'all') filters.push('Op: 0x' + state.op);
+  if (state.type !== 'all') filters.push('Type: ' + state.type);
+  if (state.hexq) filters.push('Hex: ' + state.hexq);
+  document.getElementById('sb-filter').textContent = filters.length ? filters.join(' · ') : 'No filter active';
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const frag = document.createDocumentFragment();
+
+  filtered.forEach((p, ri) => {
     const tr = document.createElement('tr');
-    tr.style.cursor = 'pointer';
+    if (p.globalIdx === selIdx) tr.className = 'selected';
+
+    const typeLabel = {
+      shoot: '<span class="ty-shoot">SHOOT</span>',
+      ability: '<span class="ty-ability">ABILITY</span>',
+      move: '<span class="ty-move">MOVE</span>',
+      idle: '<span class="ty-idle">IDLE</span>',
+      hb: '<span class="ty-hb">HEARTBEAT</span>',
+      cs: '<span class="ty-cs">CLOCK-SYNC</span>',
+      init: '<span class="ty-init">INIT</span>',
+    }[p.type] || p.type;
+
+    const opClass = { '01':'op-01','81':'op-81','82':'op-82','02':'op-02' }[p.opcode.toLowerCase()] || 'op-xx';
+    const hexPrev = (p.hex.slice(0, 64) + (p.hex.length > 64 ? '…' : ''))
+                      .replace(/../g, h => h + ' ').trim();
+
     tr.innerHTML = `
-      <td style="color:var(--cyan)">${pkt.t.toFixed(3)}s</td>
-      <td>${pkt.seq}</td>
-      <td>${tagHtml(cls)}</td>
-      <td>${pkt.len}B</td>
-      <td style="color:var(--yellow)">${pkt.load}</td>
-      <td style="font-family:monospace">0x${b16}</td>
-      <td style="color:var(--muted);font-family:monospace;font-size:11px">${preview}</td>
+      <td style="color:var(--muted)">${p.globalIdx+1}</td>
+      <td style="color:var(--cyan)">${p.t.toFixed(3)}</td>
+      <td class="${p.dir==='C'?'dir-c':'dir-s'}">${p.dir}</td>
+      <td class="op ${opClass}">0x${p.opcode}</td>
+      <td>${p.seq}</td>
+      <td>${p.len}</td>
+      <td style="color:var(--yellow)">${p.load}</td>
+      <td>${typeLabel}</td>
+      <td class="rot-val">${p.rot != null ? p.rot+'°' : '—'}</td>
+      <td class="hex-prev">${hexPrev}</td>
     `;
-    tr.addEventListener('click', () => showHex(pkt));
-    tbody.appendChild(tr);
+    tr.addEventListener('click', () => selectPacket(p));
+    frag.appendChild(tr);
   });
 
-  // Build heatmaps
-  buildHeatmap('idleHeatmap', client.find(p => p.t > 1 && p.t < 19 && p.len === 37));
-  buildHeatmap('activeHeatmap', client.find(p => Math.abs(p.t - 21.701) < 0.01));
-
-  // Draw charts
-  drawTimeline(client);
-  drawLoad(client);
-  drawClock(cs, hb);
+  tbody.innerHTML = '';
+  tbody.appendChild(frag);
 }
 
-function buildHeatmap(id, pkt) {
-  if (!pkt) return;
-  const el = document.getElementById(id);
-  const bytes = pkt.hex.match(/../g) || [];
-  const fieldColors = ['#4f8ef7','#1abc9c','#1abc9c','#f1c40f','#f1c40f','#9b59b6','#9b59b6',
-    '#2ecc71','#2ecc71','#2ecc71','#2ecc71','#2ecc71','#2ecc71','#2ecc71','#e67e22','#e67e22','#e74c3c'];
-  bytes.forEach((b, i) => {
-    const v = parseInt(b, 16);
-    const alpha = 0.1 + (v / 255) * 0.7;
-    const baseColor = fieldColors[i] || '#a0aec0';
-    const div = document.createElement('div');
-    div.className = 'byte-cell';
-    div.style.background = baseColor.replace('#', 'rgba(').replace(/^rgba\(/, '') + `, ${alpha})`;
-    // convert hex color properly
-    div.style.background = hexToRgba(baseColor, alpha);
-    div.innerHTML = `<span class="offset">${i}</span><span class="val">${b}</span>`;
-    div.title = `Byte ${i}: 0x${b} (${v})`;
-    el.appendChild(div);
-  });
-}
+function selectPacket(p) {
+  selIdx = p.globalIdx;
+  renderTable();
 
-function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1,3), 16);
-  const g = parseInt(hex.slice(3,5), 16);
-  const b = parseInt(hex.slice(5,7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
+  document.getElementById('detail-empty').style.display = 'none';
+  const df = document.getElementById('detail-filled');
+  df.style.display = 'flex';
 
-function showHex(pkt) {
-  document.getElementById('hexInfo').innerHTML = `
-    Packet at <span>t=${pkt.t.toFixed(3)}s</span> · seq=<span>${pkt.seq}</span> · 
-    <span>${pkt.len} bytes</span> · load=<span>${pkt.load}</span> · 
-    ${tagHtml(classifyPacket(pkt))}
+  const typeLabel = { shoot:'🔴 SHOOT', ability:'🟣 ABILITY', move:'🟢 MOVE', idle:'⚪ IDLE', hb:'🟣 HEARTBEAT', cs:'🔵 CLOCK-SYNC', init:'🟡 INIT' }[p.type] || p.type;
+  document.getElementById('detail-header').innerHTML = `
+    <div class="pv">Packet #${p.globalIdx+1} · ${p.dir === 'C' ? 'Client → Server' : 'Server → Client'} · ${typeLabel}</div>
+    <div class="ph">t = ${p.t.toFixed(4)}s · opcode 0x${p.opcode} · ${p.len} bytes</div>
   `;
-  document.getElementById('hexViewer').innerHTML = bytesToHexAnnotated(pkt.hex);
+
+  const fields = [
+    ['Direction', p.dir === 'C' ? 'Client → Server' : 'Server → Client'],
+    ['Time', p.t.toFixed(4) + 's'],
+    ['Opcode', '0x' + p.opcode],
+    ['Seq', p.seq],
+    ['Packet len', p.len + ' bytes'],
+    ['Load field', p.load + ' (0x' + p.load.toString(16).toUpperCase().padStart(4,'0') + ')'],
+    ['Rotation', p.rot != null ? p.rot + '°' : '—'],
+    ['Rot raw', p.rot_raw != null ? p.rot_raw : '—'],
+    ['Move raw', p.move_raw != null ? '0x' + p.move_raw.toString(16).toUpperCase().padStart(2,'0') : '—'],
+    ['Shooting', p.shooting ? '✅ Yes' : 'No'],
+    ['Ability', p.ability ? '✅ Yes' : 'No'],
+    ['Moving', p.moving ? '✅ Yes' : 'No'],
+  ];
+
+  document.getElementById('field-table').innerHTML = fields.map(([k,v]) =>
+    `<div class="ft-row"><span class="ft-k">${k}</span><span class="ft-v">${v}</span></div>`
+  ).join('');
+
+  // Hex viewer
+  const bytes = (p.hex.match(/../g) || []);
+  const lines = [];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const row = bytes.slice(i, i + 16);
+    const addr = String(i).padStart(3, '0');
+    const hex = row.map((b, j) => {
+      const abs = i + j;
+      const col = byteColor(abs);
+      return `<span style="color:${col}">${b}</span>`;
+    }).join(' ');
+    const ascii = row.map(b => {
+      const c = parseInt(b, 16);
+      return c >= 32 && c < 127 ? String.fromCharCode(c) : '.';
+    }).join('');
+    lines.push(`<span style="color:#334155">${addr}</span>  ${hex.padEnd(300)}  <span style="color:#475569">${ascii}</span>`);
+  }
+  document.getElementById('hex-view').innerHTML = lines.join('\n');
+
+  document.getElementById('sb-sel').textContent =
+    `Selected: #${p.globalIdx+1} · t=${p.t.toFixed(3)}s · ${p.len}B · 0x${p.opcode} · ${p.type.toUpperCase()}`;
 }
 
-function drawTimeline(client) {
-  const ctx = document.getElementById('timelineChart').getContext('2d');
-
-  const pts = client.map(p => ({ x: p.t, y: p.len }));
-  const colors = client.map(p => {
-    if (p.shooting) return 'rgba(231,76,60,0.85)';
-    if (p.ability) return 'rgba(155,89,182,0.85)';
-    if (p.moving && !p.shooting) return 'rgba(46,204,113,0.6)';
-    return 'rgba(122,132,153,0.4)';
+function setupControls() {
+  // Direction buttons
+  document.getElementById('dir-btns').addEventListener('click', e => {
+    const b = e.target.closest('[data-dir]'); if (!b) return;
+    document.querySelectorAll('[data-dir]').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    state.dir = b.dataset.dir;
+    applyFilter();
   });
 
-  new Chart(ctx, {
-    type: 'scatter',
-    data: {
-      datasets: [{
-        data: pts,
-        backgroundColor: colors,
-        pointRadius: client.map(p => p.shooting ? 5 : p.ability ? 6 : 3),
-        pointHoverRadius: 7,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => {
-              const p = client[ctx.dataIndex];
-              return `t=${p.t.toFixed(3)}s  len=${p.len}B  seq=${p.seq}  load=${p.load}`;
-            }
-          }
-        },
-        annotation: buildAnnotations()
-      },
-      scales: {
-        x: { title: { display: true, text: 'Time (s)', color: '#7a8499' }, grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' } },
-        y: { title: { display: true, text: 'Packet size (bytes)', color: '#7a8499' }, grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' }, min: 30, max: 85 }
-      }
+  // Opcode buttons
+  document.getElementById('op-btns').addEventListener('click', e => {
+    const b = e.target.closest('[data-op]'); if (!b) return;
+    document.querySelectorAll('[data-op]').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    state.op = b.dataset.op;
+    applyFilter();
+  });
+
+  // Type buttons
+  document.getElementById('type-btns').addEventListener('click', e => {
+    const b = e.target.closest('[data-type]'); if (!b) return;
+    document.querySelectorAll('[data-type]').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    state.type = b.dataset.type;
+    applyFilter();
+  });
+
+  // Hex search
+  document.getElementById('hex-search').addEventListener('input', e => {
+    state.hexq = e.target.value.trim();
+    applyFilter();
+  });
+
+  // Column sort
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      document.querySelectorAll('thead th').forEach(h => h.classList.remove('sorted'));
+      th.classList.add('sorted');
+      applyFilter();
+    });
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', e => {
+    if (selIdx < 0) return;
+    const ri = filtered.findIndex(p => p.globalIdx === selIdx);
+    if (e.key === 'ArrowDown' && ri < filtered.length - 1) {
+      selectPacket(filtered[ri + 1]);
+      scrollSelected();
+    } else if (e.key === 'ArrowUp' && ri > 0) {
+      selectPacket(filtered[ri - 1]);
+      scrollSelected();
     }
   });
 }
 
-function buildAnnotations() {
-  return {
-    annotations: {
-      idleEnd: { type: 'line', xMin: 20, xMax: 20, borderColor: 'rgba(79,142,247,0.4)', borderWidth: 1, borderDash: [4,4], label: { content: 'Active start', display: true, color: '#4f8ef7', font: { size: 10 }, position: 'start' } },
-      ability1: { type: 'line', xMin: 19.897, xMax: 19.897, borderColor: 'rgba(155,89,182,0.6)', borderWidth: 2, label: { content: '🟣 Ability?', display: true, color: '#9b59b6', font: { size: 10 }, position: 'end' } },
-      ability2: { type: 'line', xMin: 7.583, xMax: 7.583, borderColor: 'rgba(155,89,182,0.4)', borderWidth: 1, borderDash: [3,3], label: { content: '🟣 Ability?', display: true, color: '#9b59b6', font: { size: 10 }, position: 'start' } },
-      windDown: { type: 'line', xMin: 40, xMax: 40, borderColor: 'rgba(241,196,15,0.4)', borderWidth: 1, borderDash: [4,4], label: { content: 'Wind-down', display: true, color: '#f1c40f', font: { size: 10 }, position: 'start' } },
-    }
-  };
+function scrollSelected() {
+  const sel = document.querySelector('#tbody tr.selected');
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
 }
 
-function drawLoad(client) {
-  const ctx = document.getElementById('loadChart').getContext('2d');
-  new Chart(ctx, {
-    type: 'scatter',
-    data: {
-      datasets: [{
-        data: client.map(p => ({ x: p.t, y: p.load })),
-        backgroundColor: client.map(p => {
-          if (p.shooting) return 'rgba(231,76,60,0.7)';
-          if (p.ability) return 'rgba(155,89,182,0.9)';
-          if (p.t >= 20 && p.t <= 40) return 'rgba(46,204,113,0.5)';
-          return 'rgba(122,132,153,0.35)';
-        }),
-        pointRadius: client.map(p => p.shooting ? 4 : 2),
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => { const p = client[ctx.dataIndex]; return `t=${p.t.toFixed(2)}s load=${p.load} (0x${p.load.toString(16).toUpperCase()})`;} } } },
-      scales: {
-        x: { grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' } },
-        y: { grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' }, title: { display: true, text: 'Load value', color: '#7a8499' } }
-      }
-    }
-  });
-}
-
-function drawClock(cs, hb) {
-  const ctx = document.getElementById('clockChart').getContext('2d');
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      datasets: [
-        {
-          label: 'Uptime (0x82 field 1)',
-          data: cs.map(p => ({ x: p.t, y: p.uptime })),
-          borderColor: 'rgba(79,142,247,0.8)',
-          backgroundColor: 'rgba(79,142,247,0.1)',
-          pointRadius: 1, tension: 0.3, fill: true,
-        },
-        {
-          label: 'Clock ref 2',
-          data: cs.map(p => ({ x: p.t, y: p.ref })),
-          borderColor: 'rgba(26,188,156,0.8)',
-          backgroundColor: 'transparent',
-          pointRadius: 1, tension: 0.3,
-        },
-        {
-          label: 'Match time (0x81 heartbeat)',
-          data: hb.map(p => ({ x: p.t, y: p.match_time })),
-          borderColor: 'rgba(241,196,15,0.8)',
-          backgroundColor: 'transparent',
-          pointRadius: 1, tension: 0.3,
-        }
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#7a8499', font: { size: 11 } }, position: 'bottom' } },
-      scales: {
-        x: { type: 'linear', grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' }, title: { display: true, text: 'Time (s)', color: '#7a8499' } },
-        y: { grid: { color: 'rgba(42,47,63,0.5)' }, ticks: { color: '#7a8499' }, title: { display: true, text: 'Value (seconds)', color: '#7a8499' } }
-      }
-    }
-  });
-}
-
-main().catch(e => {
-  document.getElementById('app').innerHTML = `<div class="loader" style="color:var(--red)">Error: ${e.message}</div>`;
+load().catch(e => {
+  document.getElementById('tbody').innerHTML =
+    `<tr><td colspan="10" style="color:var(--red);padding:20px">Failed to load: ${e.message}</td></tr>`;
 });
 </script>
 </body>

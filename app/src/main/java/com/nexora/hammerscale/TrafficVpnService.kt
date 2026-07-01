@@ -20,13 +20,13 @@ import java.nio.ByteBuffer
 class TrafficVpnService : VpnService() {
 
     companion object {
-        const val ACTION_START = "com.nexora.hammerscale.START_VPN"
-        const val ACTION_STOP  = "com.nexora.hammerscale.STOP_VPN"
-        const val TARGET_PACKAGE = "com.nekki.shadowfight3"
-        const val CHANNEL_ID = "hammerscale_vpn"
-        const val NOTIF_ID = 1001
-        const val VPN_ADDRESS = "10.0.0.1"
-        const val VPN_ROUTE   = "0.0.0.0"
+        const val ACTION_START   = "com.nexora.hammerscale.START_VPN"
+        const val ACTION_STOP    = "com.nexora.hammerscale.STOP_VPN"
+        const val TARGET_PACKAGE = "com.plarium.mechlegion"
+        const val CHANNEL_ID     = "hammerscale_vpn"
+        const val NOTIF_ID       = 1001
+        const val VPN_ADDRESS    = "10.0.0.1"
+        const val VPN_ROUTE      = "0.0.0.0"
 
         @Volatile var instance: TrafficVpnService? = null
     }
@@ -63,11 +63,10 @@ class TrafficVpnService : VpnService() {
                 .addDnsServer("8.8.4.4")
                 .setMtu(1500)
 
-            // Only capture traffic from the target app
             try {
                 builder.addAllowedApplication(TARGET_PACKAGE)
             } catch (e: Exception) {
-                // Target app not installed - still monitor all traffic
+                // Target app not installed — monitor all traffic
             }
 
             vpnInterface = builder.establish()
@@ -78,12 +77,10 @@ class TrafficVpnService : VpnService() {
                 vpnFd = fd,
                 onConnectionEvent = { entry -> viewModel.addOrUpdateConnection(entry) },
                 onMessage = { id, msg -> viewModel.addMessage(id, msg) },
-                onStatusChange = { id, status ->
-                    viewModel.updateConnectionStatus(id, status)
-                },
+                onStatusChange = { id, status -> viewModel.updateConnectionStatus(id, status) },
                 onWebSocket = { id -> viewModel.markAsWebSocket(id) },
-                onClanRounds = { rounds -> viewModel.setClanRounds(rounds) },
-                onBattleSeq = { seq -> viewModel.setBattleSeq(seq) }
+                onClanRounds = { _ -> },
+                onBattleSeq = { _ -> }
             )
 
             udpHandler = UdpHandler(
@@ -91,13 +88,12 @@ class TrafficVpnService : VpnService() {
                 vpnFd = fd,
                 onConnectionEvent = { entry -> viewModel.addOrUpdateConnection(entry) },
                 onMessage = { id, msg -> viewModel.addMessage(id, msg) },
-                onStatusChange = { id, status ->
-                    viewModel.updateConnectionStatus(id, status)
-                }
+                onStatusChange = { id, status -> viewModel.updateConnectionStatus(id, status) }
             )
 
             captureJob = scope.launch { captureLoop(fd) }
             viewModel.setVpnRunning(true)
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIF_ID, buildNotification(),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -117,9 +113,7 @@ class TrafficVpnService : VpnService() {
         while (currentCoroutineContext().isActive) {
             try {
                 buf.clear()
-                val len = withContext(Dispatchers.IO) {
-                    input.read(buf.array())
-                }
+                val len = withContext(Dispatchers.IO) { input.read(buf.array()) }
                 if (len <= 0) { delay(1); continue }
 
                 buf.limit(len)
@@ -135,105 +129,6 @@ class TrafficVpnService : VpnService() {
             }
         }
     }
-
-    /**
-     * Inject a crafted packet into the battle connection's outbound stream.
-     *
-     * Priority:
-     *   1. battleSocketId — the connection that carried the BattleStarted packet
-     *      (may differ from gameSocketId if SF3 uses separate auth/battle connections)
-     *   2. gameSocketId — the HANDSHAKE connection
-     *   3. Any ESTABLISHED TCP connection (last resort)
-     *
-     * If the connection is WebSocket the handler automatically wraps the payload
-     * in a masked WS binary frame before writing to the server.
-     */
-    fun injectToGameSocket(data: ByteArray) {
-        injectToGameSocketDiag(data)
-    }
-
-    /**
-     * Direct-write injection — writes bytes straight to the server socket with a
-     * per-connection lock, bypassing the outbound queue.  Returns a diagnostic string.
-     *
-     * Priority:
-     *   1. battleSocketId — connection that carried BattleStarted
-     *   2. gameSocketId   — HANDSHAKE connection
-     *   3. any ESTABLISHED connection
-     *
-     * This must be called from a background thread / IO coroutine; the write lock
-     * may block briefly if writerLoop is mid-write.
-     */
-    fun injectDirect(data: ByteArray): String {
-        val handler = tcpHandler ?: return "FAIL: tcpHandler is null (VPN not running)"
-        val vm = AppState.viewModel
-        val battleId    = vm.battleSocketId.value
-        val handshakeId = vm.gameSocketId.value
-        return when {
-            battleId != null -> {
-                val r = handler.injectDirect(battleId, data)
-                "battleSocket …${battleId.takeLast(16)}: $r"
-            }
-            handshakeId != null -> {
-                val r = handler.injectDirect(handshakeId, data)
-                "gameSocket …${handshakeId.takeLast(16)}: $r"
-            }
-            else -> handler.injectDirectToAny(data)
-        }
-    }
-
-    /**
-     * Same as injectToGameSocket but returns a one-line diagnostic string so the
-     * overlay can display exactly what happened (or null if tcpHandler is null).
-     * Kept for backward compatibility — prefer injectDirect.
-     */
-    fun injectToGameSocketDiag(data: ByteArray): String? {
-        val handler = tcpHandler ?: return null
-        val vm = AppState.viewModel
-        val battleId    = vm.battleSocketId.value
-        val handshakeId = vm.gameSocketId.value
-        return when {
-            battleId != null -> {
-                val r = handler.injectToServer(battleId, data)
-                "battleSocket …${battleId.takeLast(16)}: ${r ?: "handler returned null"}"
-            }
-            handshakeId != null -> {
-                val r = handler.injectToServer(handshakeId, data)
-                "gameSocket …${handshakeId.takeLast(16)}: ${r ?: "handler returned null"}"
-            }
-            else -> {
-                val r = handler.injectToAny(data)
-                "injectToAny: ${r ?: "handler returned null"}"
-            }
-        }
-    }
-
-    /**
-     * Arm the ARM-WIN intercept: the next outbound event_battle_finish_fight packet
-     * from the SF3 game client will be silently replaced with a crafted WIN packet
-     * (same counter, same connection) so the server responds on the connection the
-     * game is already waiting on, causing the game to display the WIN screen.
-     */
-    fun armIntercept(roundsToWin: Int = 3) {
-        tcpHandler?.armIntercept(roundsToWin)
-    }
-
-    /** Cancel a previously armed intercept without firing it. */
-    fun disarmIntercept() {
-        tcpHandler?.disarmIntercept()
-    }
-
-    /** Arm the raid damage intercept — next outbound raid_fight_finish will report max damage (boss killed). */
-    fun armRaidIntercept() { tcpHandler?.armRaidIntercept() }
-
-    /** Cancel a previously armed raid intercept without firing it. */
-    fun disarmRaidIntercept() { tcpHandler?.disarmRaidIntercept() }
-
-    /** Arm the brawler WIN intercept — next outbound brawler_finish is rebuilt as a WIN. */
-    fun armBrawlerIntercept() { tcpHandler?.armBrawlerIntercept() }
-
-    /** Cancel a previously armed brawler intercept without firing it. */
-    fun disarmBrawlerIntercept() { tcpHandler?.disarmBrawlerIntercept() }
 
     fun stopVpn() {
         captureJob?.cancel()
@@ -265,7 +160,7 @@ class TrafficVpnService : VpnService() {
                 "HAMMERSCALE VPN",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Traffic monitoring VPN"
+                description = "Mech Arena traffic monitor"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -288,7 +183,7 @@ class TrafficVpnService : VpnService() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HAMMERSCALE Active")
-            .setContentText("Monitoring: $TARGET_PACKAGE")
+            .setContentText("Monitoring Mech Arena traffic")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(openIntent)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPending)

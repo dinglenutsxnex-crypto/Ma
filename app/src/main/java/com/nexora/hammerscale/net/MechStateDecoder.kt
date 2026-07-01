@@ -2,33 +2,55 @@ package com.nexora.hammerscale.net
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.PI
 
 /**
- * Best-effort decoder for Mech Arena Lidgren UDP opcode 0x01 packets.
+ * Mech Arena (com.plarium.mechlegion) Lidgren UDP opcode 0x01 packet decoder.
  *
- * Confirmed layout (from ma.pcapng analysis):
- *   byte[0]    = 0x01 (opcode)
- *   byte[1:3]  = LE u16 sequence number (increments +2 per tick)
- *   byte[3:5]  = LE u16 load field (~256 idle, >272 active)
- *   byte[5..]  = input/state batch — structure UNCONFIRMED
+ * Confirmed layout:
+ *   byte[0]    = 0x01  opcode
+ *   byte[1:3]  = LE u16 sequence number  (+2 per tick)
+ *   byte[3:5]  = LE u16 load field       (~256 idle, >272 active)
+ *   byte[5:]   = Lidgren bit-packed payload  (LSB-first)
  *
- * The est. (estimated) fields read bytes[5+] as LE float32.
- * They will be NaN / ±Inf when the bytes don't represent a valid float,
- * which indicates they are not a position/rotation field at that offset.
- * These are labelled "est." in the UI and should not be treated as ground truth
- * until a labeled capture isolates individual actions.
+ * ActorMovementState at payload bit-offset +10 (confirmed empirically):
+ *   X   ReadRangedSingle(-2000, 2000, 24)  — PositionXZRange/Bits from dump.cs
+ *   Y   ReadRangedSingle( -300,  300, 16)  — PositionYRange/Bits
+ *   Z   ReadRangedSingle(-2000, 2000, 24)
+ *   VX  ReadRangedSingle( -200,  200, 16)  — VelocityXZRange/Bits
+ *   VY  ReadRangedSingle( -200,  200, 16)  — VelocityYRange/Bits
+ *   VZ  ReadRangedSingle( -200,  200, 16)
+ *   Yaw ReadRangedSingle(    0,  360, 12)  — empirically confirmed
+ *
+ * estF0=X(m)  estF1=Z(m)  estF2=yaw(rad, for overlay fmtAngle)  estF3=Y(m)
  */
 data class TickState(
-    val seq: Int,           // bytes[1:3] — confirmed
-    val tick: Int,          // seq / 2
-    val load: Int,          // bytes[3:5] — confirmed
-    val isActive: Boolean,  // load > 272
-    val payloadSize: Int,   // total bytes
-    val estF0: Float?,      // bytes[5:9]  as LE float32
-    val estF1: Float?,      // bytes[9:13] as LE float32
-    val estF2: Float?,      // bytes[13:17] as LE float32
-    val estF3: Float?,      // bytes[17:21] as LE float32
+    val seq: Int,
+    val tick: Int,
+    val load: Int,
+    val isActive: Boolean,
+    val payloadSize: Int,
+    val estF0: Float?,   // X position (metres)
+    val estF1: Float?,   // Z position (metres)
+    val estF2: Float?,   // yaw        (radians)
+    val estF3: Float?,   // Y position (metres)
 )
+
+// Lidgren ReadRangedSingle: reads nBits LSB-first and maps to [min, max]
+private fun lidgrenRanged(data: ByteArray, bitPos: Int, min: Float, max: Float, nBits: Int): Float {
+    var raw = 0L
+    for (i in 0 until nBits) {
+        val b = bitPos + i
+        if (b / 8 < data.size) raw = raw or (((data[b / 8].toLong() and 0xFF) shr (b % 8) and 1L) shl i)
+    }
+    return min + raw.toFloat() * (max - min) / ((1L shl nBits) - 1L).toFloat()
+}
+
+// Constants from BinarySerializationExtension in dump.cs
+private const val XZ = 2000f; private const val XZ_B = 24
+private const val Y  = 300f;  private const val Y_B  = 16
+private const val V  = 200f;  private const val V_B  = 16
+private const val YAW_B = 12  // empirically determined; 0.088° precision
 
 object MechStateDecoder {
 
@@ -40,10 +62,19 @@ object MechStateDecoder {
         val seq  = buf.short.toInt() and 0xFFFF
         val load = buf.short.toInt() and 0xFFFF
 
-        fun readFloat(offset: Int): Float? {
-            if (data.size < offset + 4) return null
-            val f = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).float
-            return if (f.isNaN() || f.isInfinite() || f < -100_000f || f > 100_000f) null else f
+        var posX: Float? = null; var posY: Float? = null
+        var posZ: Float? = null; var yaw:  Float? = null
+
+        if (data.size >= 14) {
+            var bp = 5 * 8 + 10   // payload starts at byte 5, position at +10 bits
+            val x = lidgrenRanged(data, bp, -XZ, XZ, XZ_B); bp += XZ_B
+            val y = lidgrenRanged(data, bp,  -Y,  Y,  Y_B); bp += Y_B
+            val z = lidgrenRanged(data, bp, -XZ, XZ, XZ_B); bp += XZ_B
+            if (kotlin.math.abs(x) < 1990f && kotlin.math.abs(z) < 1990f && kotlin.math.abs(y) < 295f) {
+                posX = x; posY = y; posZ = z
+                bp += V_B + V_B + V_B   // skip velocity
+                yaw = (lidgrenRanged(data, bp, 0f, 360f, YAW_B) * PI / 180.0).toFloat()
+            }
         }
 
         return TickState(
@@ -52,10 +83,10 @@ object MechStateDecoder {
             load        = load,
             isActive    = load > 272,
             payloadSize = data.size,
-            estF0       = readFloat(5),
-            estF1       = readFloat(9),
-            estF2       = readFloat(13),
-            estF3       = readFloat(17),
+            estF0       = posX,
+            estF1       = posZ,
+            estF2       = yaw,
+            estF3       = posY,
         )
     }
 

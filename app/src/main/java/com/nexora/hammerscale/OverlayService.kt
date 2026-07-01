@@ -205,15 +205,15 @@ class OverlayService : android.app.Service() {
             setTextColor(MechStateDecoder.stateColor(state))
         }
 
-        val fmt = "%.1f"
+        val fmt = "%.3f"
         v.findViewById<TextView>(R.id.tick_est_x)?.text =
-            state.posX?.let { "X  ${fmt.format(it)} m" } ?: "X  — (Lidgren decode failed)"
+            state.estF0?.let { "${fmt.format(it)} (bytes[5:9])" } ?: "— (not a valid float)"
         v.findViewById<TextView>(R.id.tick_est_z)?.text =
-            state.posZ?.let { "Z  ${fmt.format(it)} m" } ?: "Z  — (Lidgren decode failed)"
+            state.estF1?.let { "${fmt.format(it)} (bytes[9:13])" } ?: "— (not a valid float)"
         v.findViewById<TextView>(R.id.tick_est_yaw)?.text =
-            (state.yawSimple ?: state.yawLidgren)?.let { "${"%.1f".format(it)}°" } ?: "— (no yaw)"
+            state.estF2?.let { fmtAngle(it) + "  (bytes[13:17])" } ?: "— (not a valid float)"
         v.findViewById<TextView>(R.id.tick_est_pitch)?.text =
-            state.posY?.let { "Y  ${fmt.format(it)} m" } ?: "Y  — (Lidgren decode failed)"
+            state.estF3?.let { fmtAngle(it) + "  (bytes[17:21])" } ?: "— (not a valid float)"
 
         v.findViewById<TextView>(R.id.tick_raw)?.text =
             "${state.payloadSize} B total  |  payload ${state.payloadSize - 5} B (bytes[5+])"

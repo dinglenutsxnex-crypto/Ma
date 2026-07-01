@@ -18,9 +18,14 @@ class ConnectionViewModel : ViewModel() {
     private val _stats = MutableLiveData(Stats())
     val stats: LiveData<Stats> = _stats
 
-    // Detected Mech Arena game server (UDP to port 7015)
+    // Detected Mech Arena game server entry (UDP port 7015)
     private val _gameServer = MutableLiveData<ConnectionEntry?>(null)
     val gameServer: LiveData<ConnectionEntry?> = _gameServer
+
+    // Battle flow: classified packets from the game server only
+    private val battlePacketList = mutableListOf<LiveMessage>()
+    private val _battlePackets = MutableLiveData<List<LiveMessage>>(emptyList())
+    val battlePackets: LiveData<List<LiveMessage>> = _battlePackets
 
     data class Stats(
         val totalConnections: Int = 0,
@@ -32,9 +37,7 @@ class ConnectionViewModel : ViewModel() {
     fun setVpnRunning(running: Boolean) {
         _vpnRunning.postValue(running)
         if (!running) {
-            connectionMap.values.forEach { conn ->
-                if (conn.isLive) conn.status = ConnectionStatus.CLOSED
-            }
+            connectionMap.values.forEach { if (it.isLive) it.status = ConnectionStatus.CLOSED }
             _gameServer.postValue(null)
             publishUpdate()
         }
@@ -42,7 +45,6 @@ class ConnectionViewModel : ViewModel() {
 
     fun addOrUpdateConnection(entry: ConnectionEntry) {
         connectionMap[entry.id] = entry
-        // Track Mech Arena game server: UDP port 7015
         if (entry.protocol == Protocol.UDP && entry.dstPort == 7015) {
             _gameServer.postValue(entry)
         }
@@ -53,10 +55,7 @@ class ConnectionViewModel : ViewModel() {
         connectionMap[id]?.let {
             it.status = status
             it.lastActivityTime = System.currentTimeMillis()
-            // Refresh game server live data if it's this connection
-            if (it.protocol == Protocol.UDP && it.dstPort == 7015) {
-                _gameServer.postValue(it)
-            }
+            if (it.protocol == Protocol.UDP && it.dstPort == 7015) _gameServer.postValue(it)
             publishUpdate()
         }
     }
@@ -75,28 +74,32 @@ class ConnectionViewModel : ViewModel() {
                 conn.messages.add(message)
                 if (conn.messages.size > 500) conn.messages.removeAt(0)
             }
-            if (message.direction == LiveMessage.Direction.INBOUND) {
-                conn.bytesIn += message.data.size
-            } else {
-                conn.bytesOut += message.data.size
-            }
+            if (message.direction == LiveMessage.Direction.INBOUND) conn.bytesIn += message.data.size
+            else conn.bytesOut += message.data.size
             conn.lastActivityTime = System.currentTimeMillis()
+
+            // Accumulate battle flow packets (game server only)
             if (conn.protocol == Protocol.UDP && conn.dstPort == 7015) {
                 _gameServer.postValue(conn)
+                synchronized(battlePacketList) {
+                    battlePacketList.add(message)
+                    if (battlePacketList.size > 2000) battlePacketList.removeAt(0)
+                }
+                _battlePackets.postValue(battlePacketList.toList())
             }
+
             publishUpdate()
         }
     }
 
     fun resolvedHost(id: String, host: String) {
-        connectionMap[id]?.let {
-            it.dstHost = host
-            publishUpdate()
-        }
+        connectionMap[id]?.let { it.dstHost = host; publishUpdate() }
     }
 
     fun clearAll() {
         connectionMap.clear()
+        synchronized(battlePacketList) { battlePacketList.clear() }
+        _battlePackets.postValue(emptyList())
         _gameServer.postValue(null)
         publishUpdate()
     }
@@ -108,18 +111,21 @@ class ConnectionViewModel : ViewModel() {
         return synchronized(conn.messages) { conn.messages.toList() }
     }
 
-    fun getAllMessages(): List<LiveMessage> {
-        return connectionMap.values
+    fun getAllMessages(): List<LiveMessage> =
+        connectionMap.values
             .flatMap { conn -> synchronized(conn.messages) { conn.messages.toList() } }
             .sortedBy { it.timestamp }
-    }
+
+    /** Battle-flow-only messages for export (game server UDP 7015 packets). */
+    fun getBattleMessages(): List<LiveMessage> =
+        synchronized(battlePacketList) { battlePacketList.toList() }
 
     private fun publishUpdate() {
         val list = connectionMap.values.sortedByDescending { it.lastActivityTime }
         _connections.postValue(list)
         val active = list.count { it.isLive }
-        val dns = list.count { it.protocol == Protocol.DNS }
-        val udp = list.count { it.protocol == Protocol.UDP && it.isLive }
+        val dns    = list.count { it.protocol == Protocol.DNS }
+        val udp    = list.count { it.protocol == Protocol.UDP && it.isLive }
         _stats.postValue(Stats(list.size, active, dns, udp))
     }
 }

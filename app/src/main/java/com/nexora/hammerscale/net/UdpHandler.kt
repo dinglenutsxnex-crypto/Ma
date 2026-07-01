@@ -8,7 +8,56 @@ import java.io.FileOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
+
+// ── Mech Arena Lidgren UDP packet classifier ───────────────────────────────
+//
+// Protocol confirmed from pcap analysis (ma.pcapng):
+//   0x81  9 bytes   client↔server  Heartbeat / keepalive         → "ping"
+//   0x82  13 bytes  client↔server  Clock-sync (two LE float32)   → "clock_sync"
+//   0x01  variable  client→server  Per-tick input batch           → "tick_idle" / "tick_action"
+//   0x01  variable  server→client  Per-tick world-state           → "world_state"
+//   0x02  rare      server→client  Unknown infrequent opcode      → "unknown"
+//   other any       any            Uncharacterised                → "unknown"
+//
+// 0x01 client sub-classification uses the load field (bytes[3:5] LE uint16):
+//   ≤ 272  → "tick_idle"    (baseline ~256, ±16 jitter, packet ~35–37 B)
+//   > 272  → "tick_action"  (jumps to 264→392→448→592 during movement/shooting)
+
+object MechArenaPacketClassifier {
+
+    private const val GAME_PORT = 7015
+
+    fun isGamePort(dstPort: Int): Boolean = dstPort == GAME_PORT
+
+    fun classify(data: ByteArray, direction: LiveMessage.Direction): String {
+        if (data.isEmpty()) return "unknown"
+        val opcode = data[0].toInt() and 0xFF
+        val isOutbound = direction == LiveMessage.Direction.OUTBOUND
+
+        return when (opcode) {
+            0x81 -> if (isOutbound) "ping" else "ping_ack"
+            0x82 -> "clock_sync"
+            0x01 -> {
+                if (!isOutbound) {
+                    "world_state"
+                } else {
+                    // Load field = bytes[3:5] LE uint16
+                    if (data.size >= 5) {
+                        val load = ByteBuffer.wrap(data, 3, 2)
+                            .order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
+                        if (load > 272) "tick_action" else "tick_idle"
+                    } else {
+                        "tick_idle"
+                    }
+                }
+            }
+            else -> "unknown_0x%02X".format(opcode)
+        }
+    }
+}
 
 class UdpHandler(
     private val vpnService: VpnService,
@@ -62,10 +111,8 @@ class UdpHandler(
                 sock.soTimeout = 3000
 
                 val target = InetSocketAddress(packet.ip.dstAddr, udp.dstPort)
-                val sendPkt = DatagramPacket(payload, payload.size, target)
-                sock.send(sendPkt)
-
-                onMessage(connKey, LiveMessage(LiveMessage.Direction.OUTBOUND, payload, commandName = "unknown"))
+                sock.send(DatagramPacket(payload, payload.size, target))
+                onMessage(connKey, LiveMessage(LiveMessage.Direction.OUTBOUND, payload, commandName = "dns"))
 
                 val recvBuf = ByteArray(4096)
                 val recvPkt = DatagramPacket(recvBuf, recvBuf.size)
@@ -73,9 +120,8 @@ class UdpHandler(
                 sock.close()
 
                 val response = recvBuf.copyOf(recvPkt.length)
-                onMessage(connKey, LiveMessage(LiveMessage.Direction.INBOUND, response, commandName = "unknown"))
+                onMessage(connKey, LiveMessage(LiveMessage.Direction.INBOUND, response, commandName = "dns"))
 
-                // Parse DNS response
                 val dnsResp = DnsParser.parse(response)
                 val answers = dnsResp?.answers?.map { rec ->
                     when (rec.type) {
@@ -86,23 +132,17 @@ class UdpHandler(
                     }
                 } ?: emptyList()
 
-                // Update connection entry with answers
-                val updatedEntry = entry.copy(
+                onConnectionEvent(entry.copy(
                     dnsAnswers = answers,
                     status = ConnectionStatus.CLOSED,
                     dstHost = "DNS: $queryName → ${answers.firstOrNull() ?: "NXDOMAIN"}"
-                )
-                onConnectionEvent(updatedEntry)
+                ))
 
-                // Write DNS response back to VPN fd
-                val responsePacket = PacketParser.buildIPv4UDPPacket(
-                    srcIp = dstIp,
-                    dstIp = srcIp,
-                    srcPort = udp.dstPort,
-                    dstPort = udp.srcPort,
+                writeToVpn(PacketParser.buildIPv4UDPPacket(
+                    srcIp = dstIp, dstIp = srcIp,
+                    srcPort = udp.dstPort, dstPort = udp.srcPort,
                     payload = response
-                )
-                writeToVpn(responsePacket)
+                ))
             } catch (e: Exception) {
                 onStatusChange(connKey, ConnectionStatus.CLOSED)
             }
@@ -110,6 +150,8 @@ class UdpHandler(
     }
 
     private fun handleGenericUdp(packet: ParsedPacket, udp: UDPHeader, connKey: String) {
+        val isGameServer = MechArenaPacketClassifier.isGamePort(udp.dstPort)
+
         val entry = ConnectionEntry(
             id = connKey,
             protocol = Protocol.UDP,
@@ -124,14 +166,17 @@ class UdpHandler(
         val dstIp = packet.ip.dstAddr.address
         val payload = packet.payload
 
-        onMessage(connKey, LiveMessage(LiveMessage.Direction.OUTBOUND, payload, commandName = "unknown"))
+        val outTag = if (isGameServer)
+            MechArenaPacketClassifier.classify(payload, LiveMessage.Direction.OUTBOUND)
+        else "udp"
+        onMessage(connKey, LiveMessage(LiveMessage.Direction.OUTBOUND, payload, commandName = outTag))
 
         scope.launch {
             try {
                 val sock = udpSessions.getOrPut(connKey) {
                     DatagramSocket().also { vpnService.protect(it) }
                 }
-                sock.soTimeout = 5000
+                if (isGameServer) sock.soTimeout = 50 else sock.soTimeout = 5000
 
                 val target = InetSocketAddress(packet.ip.dstAddr, udp.dstPort)
                 sock.send(DatagramPacket(payload, payload.size, target))
@@ -141,16 +186,17 @@ class UdpHandler(
                 try {
                     sock.receive(recvPkt)
                     val response = recvBuf.copyOf(recvPkt.length)
-                    onMessage(connKey, LiveMessage(LiveMessage.Direction.INBOUND, response, commandName = "unknown"))
 
-                    val responsePacket = PacketParser.buildIPv4UDPPacket(
-                        srcIp = dstIp,
-                        dstIp = srcIp,
-                        srcPort = udp.dstPort,
-                        dstPort = udp.srcPort,
+                    val inTag = if (isGameServer)
+                        MechArenaPacketClassifier.classify(response, LiveMessage.Direction.INBOUND)
+                    else "udp"
+                    onMessage(connKey, LiveMessage(LiveMessage.Direction.INBOUND, response, commandName = inTag))
+
+                    writeToVpn(PacketParser.buildIPv4UDPPacket(
+                        srcIp = dstIp, dstIp = srcIp,
+                        srcPort = udp.dstPort, dstPort = udp.srcPort,
                         payload = response
-                    )
-                    writeToVpn(responsePacket)
+                    ))
                 } catch (_: Exception) {}
             } catch (e: Exception) {
                 udpSessions.remove(connKey)

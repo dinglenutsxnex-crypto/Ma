@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_primary">
+
+    <!-- Main content -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <!-- Title -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="[ "
+                android:textColor="#FF8B949E"
+                android:textSize="22sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:letterSpacing="0.15" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="HAMMERSCALE"
+                android:textColor="#FF00E5FF"
+                android:textSize="22sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:letterSpacing="0.15" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" ]"
+                android:textColor="#FF8B949E"
+                android:textSize="22sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:letterSpacing="0.15" />
+
+        </LinearLayout>
+
+        <!-- Subtitle -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start VPN and launch SF3"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:letterSpacing="0.1"
+            android:layout_marginTop="12dp" />
+
+        <!-- Play Button -->
+        <ImageButton
+            android:id="@+id/btn_play"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_marginTop="40dp"
+            android:background="@drawable/btn_play_bg"
+            android:src="@drawable/ic_play"
+            android:scaleType="centerInside"
+            android:padding="30dp"
+            android:contentDescription="Start VPN and launch game" />
+
+        <!-- Footer -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginTop="60dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Made by Nexora · "
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.1" />
+
+            <TextView
+                android:id="@+id/tv_discord_link"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Discord"
+                android:textColor="#FF8957E5"
+                android:textSize="14sp"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:letterSpacing="0.1"
+                android:clickable="true"
+                android:focusable="true" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="80dp"
+    android:layout_height="80dp"
+    android:elevation="16dp"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Layer 1 (bottom): [HS] text — sits BEHIND the GIF so the cyan effect sweeps over it -->
+    <TextView
+        android:id="@+id/tv_mini_hs"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="22dp"
+        android:text="[ HS ]"
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.08" />
+
+    <!-- Layer 2 (middle): animated GIF with luma-keyed transparency -->
+    <com.nexora.hammerscale.GifView
+        android:id="@+id/gif_mini"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Layer 3 (top): event count — dev mode only, above the GIF, bright green -->
+    <TextView
+        android:id="@+id/tv_mini_count"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="--"
+        android:textColor="#FF39FF14"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:visibility="gone" />
+
+</FrameLayout>

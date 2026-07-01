@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.TypedValue
 import android.view.*
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Observer
@@ -18,7 +19,14 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.nexora.hammerscale.model.ConnectionEntry
 import com.nexora.hammerscale.model.ConnectionStatus
+import com.nexora.hammerscale.model.ConnectionViewModel
 import com.nexora.hammerscale.model.LiveMessage
+import com.nexora.hammerscale.net.MechStateDecoder
+import com.nexora.hammerscale.net.TickState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.abs
 
 class OverlayService : android.app.Service() {
 
@@ -33,8 +41,15 @@ class OverlayService : android.app.Service() {
     private var overlayView: View? = null
     private var miniView: View? = null
 
-    private val packets = mutableListOf<LiveMessage>()
+    // FLOW tab — only non-idle packets shown
+    private val flowPackets = mutableListOf<LiveMessage>()
     private lateinit var packetAdapter: BattlePacketAdapter
+
+    // All packets (for counts/stats source)
+    private var allPackets = listOf<LiveMessage>()
+
+    // Active tab: 0=FLOW 1=TICK 2=STATS
+    private var currentTab = 0
 
     private var savedX: Int = 0
     private var savedY: Int = 120
@@ -42,17 +57,20 @@ class OverlayService : android.app.Service() {
     // ── Observers ──────────────────────────────────────────────────────────
 
     private val battlePacketsObserver = Observer<List<LiveMessage>> { list ->
-        val added = if (packets.size < list.size) list.drop(packets.size) else emptyList()
+        allPackets = list
+
+        // FLOW: only non-idle packets (tick_idle is too noisy to show)
+        val filtered = list.filter { it.commandName != "tick_idle" }
+        val prev = flowPackets.size
+        val added = if (flowPackets.size < filtered.size) filtered.drop(flowPackets.size) else emptyList()
         if (added.isNotEmpty()) {
-            val prev = packets.size
-            packets.addAll(added)
+            flowPackets.addAll(added)
             packetAdapter.notifyItemRangeInserted(prev, added.size)
             val rv = overlayView?.findViewById<RecyclerView>(R.id.rv_connections)
-            if (rv != null && isAtBottom(rv)) rv.scrollToPosition(packets.size - 1)
+            if (rv != null && isAtBottom(rv)) rv.scrollToPosition(flowPackets.size - 1)
         }
 
-        overlayView?.findViewById<TextView>(R.id.tv_status_bar)?.text =
-            "${packets.size} pkts  ·  ${countByType()}  ·  ${lastTimeStr()}"
+        updateStatusBar()
     }
 
     private val gameServerObserver = Observer<ConnectionEntry?> { entry ->
@@ -60,21 +78,17 @@ class OverlayService : android.app.Service() {
         updateMenuDetection(entry)
     }
 
+    private val tickStateObserver = Observer<TickState?> { state ->
+        if (currentTab == 1) updateTickPanel(state)
+    }
+
+    private val battleStatsObserver = Observer<ConnectionViewModel.BattleStats> { stats ->
+        if (currentTab == 2) updateStatsPanel(stats)
+    }
+
     private fun isAtBottom(rv: RecyclerView): Boolean {
         val lm = rv.layoutManager as? LinearLayoutManager ?: return true
         return lm.findLastVisibleItemPosition() >= packetAdapter.itemCount - 3
-    }
-
-    private fun countByType(): String {
-        val actions = packets.count { it.commandName == "tick_action" }
-        val pings   = packets.count { it.commandName == "ping" || it.commandName == "ping_ack" }
-        return "⚡$actions act  ·  ♡$pings ping"
-    }
-
-    private fun lastTimeStr(): String {
-        val ts = packets.lastOrNull()?.timestamp ?: return "—"
-        return java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault())
-            .format(java.util.Date(ts))
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -92,19 +106,146 @@ class OverlayService : android.app.Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
-        packetAdapter = BattlePacketAdapter(packets)
+        packetAdapter = BattlePacketAdapter(flowPackets)
         setupOverlay()
 
         AppState.viewModel.battlePackets.observeForever(battlePacketsObserver)
         AppState.viewModel.gameServer.observeForever(gameServerObserver)
+        AppState.viewModel.lastTickState.observeForever(tickStateObserver)
+        AppState.viewModel.battleStats.observeForever(battleStatsObserver)
     }
 
     override fun onDestroy() {
         AppState.viewModel.battlePackets.removeObserver(battlePacketsObserver)
         AppState.viewModel.gameServer.removeObserver(gameServerObserver)
+        AppState.viewModel.lastTickState.removeObserver(tickStateObserver)
+        AppState.viewModel.battleStats.removeObserver(battleStatsObserver)
         removeOverlay()
         removeMini()
         super.onDestroy()
+    }
+
+    // ── Tab switching ──────────────────────────────────────────────────────
+
+    private fun switchTab(tab: Int) {
+        currentTab = tab
+        val v = overlayView ?: return
+
+        val tabFlow  = v.findViewById<TextView>(R.id.tab_flow)
+        val tabTick  = v.findViewById<TextView>(R.id.tab_tick)
+        val tabStats = v.findViewById<TextView>(R.id.tab_stats)
+
+        val rv      = v.findViewById<View>(R.id.rv_connections)
+        val panelTick  = v.findViewById<View>(R.id.panel_tick)
+        val panelStats = v.findViewById<View>(R.id.panel_stats)
+
+        val activeColor   = Color.parseColor("#FF00E5FF")
+        val inactiveColor = Color.parseColor("#FF6E7681")
+        val activeBg      = Color.parseColor("#FF161B22")
+        val inactiveBg    = Color.parseColor("#FF0D1117")
+
+        tabFlow.setTextColor(if (tab == 0) activeColor else inactiveColor)
+        tabFlow.setBackgroundColor(if (tab == 0) activeBg else inactiveBg)
+        tabTick.setTextColor(if (tab == 1) activeColor else inactiveColor)
+        tabTick.setBackgroundColor(if (tab == 1) activeBg else inactiveBg)
+        tabStats.setTextColor(if (tab == 2) activeColor else inactiveColor)
+        tabStats.setBackgroundColor(if (tab == 2) activeBg else inactiveBg)
+
+        rv?.visibility        = if (tab == 0) View.VISIBLE else View.GONE
+        panelTick?.visibility  = if (tab == 1) View.VISIBLE else View.GONE
+        panelStats?.visibility = if (tab == 2) View.VISIBLE else View.GONE
+
+        when (tab) {
+            1 -> updateTickPanel(AppState.viewModel.lastTickState.value)
+            2 -> updateStatsPanel(AppState.viewModel.battleStats.value ?: ConnectionViewModel.BattleStats())
+        }
+    }
+
+    // ── TICK panel ─────────────────────────────────────────────────────────
+
+    private fun updateTickPanel(state: TickState?) {
+        val v = overlayView ?: return
+
+        if (state == null) {
+            v.findViewById<TextView>(R.id.tick_seq)?.text = "—  (waiting for 0x01 packet)"
+            v.findViewById<TextView>(R.id.tick_load_val)?.text = "—"
+            v.findViewById<View>(R.id.tick_load_bar)?.layoutParams?.let {
+                (it as FrameLayout.LayoutParams).width = 0; v.findViewById<View>(R.id.tick_load_bar)?.requestLayout()
+            }
+            v.findViewById<TextView>(R.id.tick_state_label)?.apply { text = "—"; setTextColor(Color.parseColor("#FF6E7681")) }
+            v.findViewById<TextView>(R.id.tick_est_x)?.text = "—"
+            v.findViewById<TextView>(R.id.tick_est_z)?.text = "—"
+            v.findViewById<TextView>(R.id.tick_est_yaw)?.text = "—"
+            v.findViewById<TextView>(R.id.tick_est_pitch)?.text = "—"
+            v.findViewById<TextView>(R.id.tick_raw)?.text = "—"
+            return
+        }
+
+        v.findViewById<TextView>(R.id.tick_seq)?.text =
+            "${state.seq}  (tick #${state.tick})"
+
+        v.findViewById<TextView>(R.id.tick_load_val)?.text = state.load.toString()
+
+        // Update load bar width — post so container has measured width
+        val barContainer = v.findViewById<FrameLayout>(R.id.tick_load_container)
+        val barView      = v.findViewById<View>(R.id.tick_load_bar)
+        if (barContainer != null && barView != null) {
+            barContainer.post {
+                val fill = (MechStateDecoder.loadFraction(state.load) * barContainer.width).toInt()
+                barView.layoutParams = FrameLayout.LayoutParams(fill, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    gravity = android.view.Gravity.START
+                }
+                barView.setBackgroundColor(MechStateDecoder.barColor(state))
+                barView.requestLayout()
+            }
+        }
+
+        v.findViewById<TextView>(R.id.tick_state_label)?.apply {
+            text = MechStateDecoder.stateLabel(state)
+            setTextColor(MechStateDecoder.stateColor(state))
+        }
+
+        val fmt = "%.3f"
+        v.findViewById<TextView>(R.id.tick_est_x)?.text =
+            state.estF0?.let { "${fmt.format(it)} (bytes[5:9])" } ?: "— (not a valid float)"
+        v.findViewById<TextView>(R.id.tick_est_z)?.text =
+            state.estF1?.let { "${fmt.format(it)} (bytes[9:13])" } ?: "— (not a valid float)"
+        v.findViewById<TextView>(R.id.tick_est_yaw)?.text =
+            state.estF2?.let { fmtAngle(it) + "  (bytes[13:17])" } ?: "— (not a valid float)"
+        v.findViewById<TextView>(R.id.tick_est_pitch)?.text =
+            state.estF3?.let { fmtAngle(it) + "  (bytes[17:21])" } ?: "— (not a valid float)"
+
+        v.findViewById<TextView>(R.id.tick_raw)?.text =
+            "${state.payloadSize} B total  |  payload ${state.payloadSize - 5} B (bytes[5+])"
+    }
+
+    private fun fmtAngle(f: Float): String {
+        val deg = (Math.toDegrees(f.toDouble())).toFloat()
+        return if (abs(deg) < 720f) "${"%.1f".format(f)} rad → ${"%.1f".format(deg)}°"
+        else "${"%.3f".format(f)}"
+    }
+
+    // ── STATS panel ────────────────────────────────────────────────────────
+
+    private fun updateStatsPanel(stats: ConnectionViewModel.BattleStats) {
+        val v = overlayView ?: return
+
+        val elapsed = if (stats.firstTs > 0 && stats.lastTs > stats.firstTs)
+            ((stats.lastTs - stats.firstTs) / 1000f).let { s ->
+                val m = (s / 60).toInt(); val sec = (s % 60).toInt()
+                if (m > 0) "${m}m ${sec}s" else "${sec}s"
+            } else "—"
+
+        v.findViewById<TextView>(R.id.stat_session)?.text  = elapsed
+        v.findViewById<TextView>(R.id.stat_tickrate)?.text =
+            "${"%.1f".format(stats.recentTickRateHz)} ticks/s  (5-s window)"
+        v.findViewById<TextView>(R.id.stat_action)?.text  = stats.actionTicks.toString()
+        v.findViewById<TextView>(R.id.stat_idle)?.text    = stats.idleTicks.toString()
+        v.findViewById<TextView>(R.id.stat_world)?.text   = stats.worldStates.toString()
+        v.findViewById<TextView>(R.id.stat_pings)?.text   = stats.pings.toString()
+        v.findViewById<TextView>(R.id.stat_clocks)?.text  = stats.clockSyncs.toString()
+        v.findViewById<TextView>(R.id.stat_tx)?.text      = formatBytes(stats.txBytes)
+        v.findViewById<TextView>(R.id.stat_rx)?.text      = formatBytes(stats.rxBytes)
     }
 
     // ── Detection panel ────────────────────────────────────────────────────
@@ -138,7 +279,7 @@ class OverlayService : android.app.Service() {
 
         bytesTx?.text = "↑ ${formatBytes(entry.bytesOut)}"
         bytesRx?.text = "↓ ${formatBytes(entry.bytesIn)}"
-        pktCount?.text = "${packets.size} pkts"
+        pktCount?.text = "${allPackets.size} pkts"
         rowBytes?.visibility = View.VISIBLE
     }
 
@@ -148,8 +289,7 @@ class OverlayService : android.app.Service() {
             v.findViewById<TextView>(R.id.menu_detection_server)?.text = "   Game Server:  —"
             v.findViewById<TextView>(R.id.menu_detection_proto)?.text  = "   Protocol:  —"
             v.findViewById<TextView>(R.id.menu_detection_status)?.apply {
-                text = "   Status:  WAITING"
-                setTextColor(Color.parseColor("#FF8B949E"))
+                text = "   Status:  WAITING"; setTextColor(Color.parseColor("#FF8B949E"))
             }
             v.findViewById<TextView>(R.id.menu_detection_bytes)?.text = "   Traffic:  —"
         } else {
@@ -157,22 +297,28 @@ class OverlayService : android.app.Service() {
                 "   Game Server:  ${entry.dstIp}:${entry.dstPort}"
             v.findViewById<TextView>(R.id.menu_detection_proto)?.text =
                 "   Protocol:  ${entry.protocol.name}"
-            val statusStr   = entry.status.name
-            val statusColor = if (entry.status == ConnectionStatus.ACTIVE)
-                Color.parseColor("#FF3FB950") else Color.parseColor("#FF8B949E")
+            val ok = entry.status == ConnectionStatus.ACTIVE
             v.findViewById<TextView>(R.id.menu_detection_status)?.apply {
-                text = "   Status:  $statusStr"
-                setTextColor(statusColor)
+                text = "   Status:  ${entry.status.name}"
+                setTextColor(if (ok) Color.parseColor("#FF3FB950") else Color.parseColor("#FF8B949E"))
             }
             v.findViewById<TextView>(R.id.menu_detection_bytes)?.text =
-                "   Traffic:  ↑${formatBytes(entry.bytesOut)}  ↓${formatBytes(entry.bytesIn)}  (${packets.size} pkts)"
+                "   Traffic:  ↑${formatBytes(entry.bytesOut)}  ↓${formatBytes(entry.bytesIn)}  (${allPackets.size} pkts)"
         }
     }
 
+    private fun updateStatusBar() {
+        val n = allPackets.size
+        val actions = allPackets.count { it.commandName == "tick_action" }
+        val pings   = allPackets.count { it.commandName == "ping" || it.commandName == "ping_ack" }
+        overlayView?.findViewById<TextView>(R.id.tv_status_bar)?.text =
+            "${n} pkts  ·  ⚡${actions} act  ·  ♡${pings} ping"
+    }
+
     private fun formatBytes(b: Long): String = when {
-        b < 1024        -> "${b} B"
-        b < 1048576     -> "${"%.1f".format(b / 1024.0)} KB"
-        else            -> "${"%.2f".format(b / 1048576.0)} MB"
+        b < 1024    -> "${b} B"
+        b < 1048576 -> "${"%.1f".format(b / 1024.0)} KB"
+        else        -> "${"%.2f".format(b / 1048576.0)} MB"
     }
 
     // ── WindowManager params ───────────────────────────────────────────────
@@ -199,6 +345,7 @@ class OverlayService : android.app.Service() {
         view.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
         overlayView = view
 
+        // RecyclerView (FLOW tab)
         val rv = view.findViewById<RecyclerView>(R.id.rv_connections)
         rv?.apply {
             layoutManager = LinearLayoutManager(this@OverlayService).also { it.stackFromEnd = true }
@@ -207,6 +354,11 @@ class OverlayService : android.app.Service() {
 
         val params = makeParams()
         attachDrag(view.findViewById(R.id.overlay_header), view, params)
+
+        // Tab buttons
+        view.findViewById<TextView>(R.id.tab_flow)?.setOnClickListener  { switchTab(0) }
+        view.findViewById<TextView>(R.id.tab_tick)?.setOnClickListener  { switchTab(1) }
+        view.findViewById<TextView>(R.id.tab_stats)?.setOnClickListener { switchTab(2) }
 
         view.findViewById<TextView>(R.id.btn_minimize).setOnClickListener {
             removeOverlay(); showMini()
@@ -220,21 +372,21 @@ class OverlayService : android.app.Service() {
         }
 
         view.findViewById<TextView>(R.id.menu_clear).setOnClickListener {
-            val prev = packets.size
-            packets.clear()
-            packetAdapter.notifyItemRangeRemoved(0, prev)
+            flowPackets.clear()
+            packetAdapter.notifyDataSetChanged()
             AppState.viewModel.clearAll()
+            allPackets = emptyList()
             menuPanel.visibility = View.GONE
             view.findViewById<TextView>(R.id.tv_status_bar)?.text = "cleared"
         }
 
         view.findViewById<TextView>(R.id.menu_download).setOnClickListener {
             menuPanel.visibility = View.GONE
-            val msgs = AppState.viewModel.getBattleMessages()
-            LogDownloader.downloadAndShare(this, msgs)
+            LogDownloader.downloadAndShare(this, AppState.viewModel.getBattleMessages())
         }
 
         updateDetectionPanel(AppState.viewModel.gameServer.value)
+        switchTab(0)
 
         windowManager.addView(view, params)
     }
@@ -251,7 +403,7 @@ class OverlayService : android.app.Service() {
         miniView = view
         view.findViewById<GifView>(R.id.gif_mini)?.setGifResource(R.raw.lexan_effect)
         view.findViewById<TextView>(R.id.tv_mini_count)?.text =
-            if (packets.isEmpty()) "--" else "${packets.size}"
+            if (allPackets.isEmpty()) "--" else "${allPackets.size}"
 
         val params = makeParams(w = dp(80f), h = dp(80f))
         var startX = 0; var startY = 0; var rawX = 0f; var rawY = 0f; var dragged = false
@@ -264,7 +416,7 @@ class OverlayService : android.app.Service() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (rawX - ev.rawX).toInt(); val dy = (ev.rawY - rawY).toInt()
-                    if (!dragged && (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8)) dragged = true
+                    if (!dragged && (abs(dx) > 8 || abs(dy) > 8)) dragged = true
                     if (dragged) {
                         params.x = (startX + dx).coerceAtLeast(0)
                         params.y = (startY + dy).coerceAtLeast(0)
@@ -285,7 +437,7 @@ class OverlayService : android.app.Service() {
         miniView = null
     }
 
-    // ── Drag ───────────────────────────────────────────────────────────────
+    // ── Drag handle ────────────────────────────────────────────────────────
 
     private fun attachDrag(handle: View, root: View, params: WindowManager.LayoutParams) {
         var startX = 0; var startY = 0; var rawX = 0f; var rawY = 0f; var dragging = false
@@ -297,7 +449,7 @@ class OverlayService : android.app.Service() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (rawX - ev.rawX).toInt(); val dy = (ev.rawY - rawY).toInt()
-                    if (!dragging && (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8)) dragging = true
+                    if (!dragging && (abs(dx) > 8 || abs(dy) > 8)) dragging = true
                     if (dragging) {
                         params.x = (startX + dx).coerceAtLeast(0)
                         params.y = (startY + dy).coerceAtLeast(0)
@@ -341,7 +493,7 @@ class OverlayService : android.app.Service() {
     }
 }
 
-// ── Battle packet adapter ──────────────────────────────────────────────────
+// ── Battle packet adapter (FLOW tab) ──────────────────────────────────────
 
 class BattlePacketAdapter(private val items: List<LiveMessage>) :
     RecyclerView.Adapter<BattlePacketAdapter.VH>() {
@@ -359,45 +511,40 @@ class BattlePacketAdapter(private val items: List<LiveMessage>) :
     override fun getItemCount() = items.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val msg = items[pos]
+        val msg  = items[pos]
         val type = msg.commandName ?: "unknown"
         val isOut = msg.direction == LiveMessage.Direction.OUTBOUND
 
-        // Color bar by packet type
         val barColor = when (type) {
-            "tick_action"  -> Color.parseColor("#FF3FB950")  // green  — movement/shooting
-            "tick_idle"    -> Color.parseColor("#FF30363D")  // dim    — idle ticks
+            "tick_action"  -> Color.parseColor("#FF3FB950")
             "ping",
-            "ping_ack"     -> Color.parseColor("#FF444C56")  // grey   — heartbeat
-            "clock_sync"   -> Color.parseColor("#FF58A6FF")  // blue   — clock
-            "world_state"  -> Color.parseColor("#FF8957E5")  // purple — server world state
-            else           -> Color.parseColor("#FFD29922")  // amber  — unknown
+            "ping_ack"     -> Color.parseColor("#FF444C56")
+            "clock_sync"   -> Color.parseColor("#FF58A6FF")
+            "world_state"  -> Color.parseColor("#FF8957E5")
+            else           -> Color.parseColor("#FFD29922")
         }
         h.colorBar.setBackgroundColor(barColor)
 
-        // Direction arrow + label
         val arrow = if (isOut) "▲" else "▼"
-        val typeLabel = when (type) {
+        val label = when (type) {
             "ping"        -> "PING"
             "ping_ack"    -> "PING ACK"
             "clock_sync"  -> "CLOCK SYNC"
-            "tick_idle"   -> "TICK  idle"
             "tick_action" -> "TICK  ACTION"
             "world_state" -> "WORLD STATE"
             else          -> type.uppercase()
         }
-        h.label.text = "$arrow $typeLabel"
-        h.label.setTextColor(
-            if (type == "tick_action") Color.parseColor("#FF3FB950")
-            else if (type == "tick_idle" || type == "ping" || type == "ping_ack") Color.parseColor("#FF6E7681")
-            else Color.parseColor("#FFE6EDF3")
-        )
+        h.label.text = "$arrow $label"
+        h.label.setTextColor(when (type) {
+            "tick_action"                         -> Color.parseColor("#FF3FB950")
+            "ping", "ping_ack", "clock_sync"      -> Color.parseColor("#FF6E7681")
+            "world_state"                         -> Color.parseColor("#FF8957E5")
+            else                                  -> Color.parseColor("#FFE6EDF3")
+        })
 
-        // Time
-        h.time.text = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault())
-            .format(java.util.Date(msg.timestamp))
+        h.time.text = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+            .format(Date(msg.timestamp))
 
-        // Detail: byte size + first byte hex
         val hex0 = "0x%02X".format(msg.data[0].toInt() and 0xFF)
         h.detail.text = "$hex0  ${msg.data.size} B"
         h.detail.visibility = View.VISIBLE
